@@ -6,8 +6,8 @@ package gateway
 // back for the model to go on from: the client reads one reply that
 // finished, not one cut short, and the turn doesn't fail the way it used
 // to. Only where the upstream goes on from a reply's part sent back (an
-// Anthropic Messages upstream natively, a Chat one in its vendor's own
-// prefill mode — prefillHow): one that answers the message again from
+// Anthropic Messages upstream that takes one, a Chat one in its vendor's
+// own prefill mode — prefillHow): one that answers the message again from
 // the start instead, as most Chat APIs do, would splice a reworded
 // re-answer onto the part the client has, with no error to tell anything
 // went wrong, so there the reply ends with the error, as it used to.
@@ -81,19 +81,39 @@ func inGroupTry(ctx context.Context) bool {
 
 // prefillHow is how the upstream a reply is translated to goes on from
 // the part of it the client has, sent back as the conversation's last
-// assistant message: an Anthropic Messages upstream natively, a Chat one
-// only in its vendor's own mode for it (chatPrefill). "" where the
-// upstream answers the message again from the start instead — most Chat
-// APIs — and a cut reply ends with the error there, as it used to: the
-// client can't tell a reworded re-answer from the reply's own rest.
+// assistant message: an Anthropic Messages upstream that takes one
+// (anthropicPrefill), a Chat one only in its vendor's own mode for it
+// (chatPrefill). "" where the upstream answers the message again from the
+// start instead — most Chat APIs — and a cut reply ends with the error
+// there, as it used to: the client can't tell a reworded re-answer from
+// the reply's own rest. A vendor that turns that last assistant message
+// away reads "" too: there the cut reply ends with the cut it started
+// from, not with a refusal of the request magpie made up to go on.
 func prefillHow(p provider.Provider, to provider.Protocol, model string) string {
 	switch to {
 	case provider.Anthropic:
-		return "anthropic"
+		if anthropicPrefill(p.Host()) {
+			return "anthropic"
+		}
 	case provider.Chat:
 		return chatPrefill(p.Host(), model)
 	}
 	return ""
+}
+
+// anthropicPrefill says whether an Anthropic Messages upstream at host
+// goes on from the trailing assistant message a continuation sends it:
+// Anthropic's own API and the relays that front it do. OpenCode's gateway
+// (Zen and Go) serves Claude over Messages and answers that body with a
+// 400 "This model does not support assistant message prefill. The
+// conversation must end with a user message." (#1447), so nothing of it is
+// asked to go on: the reply ends with the cut it started from.
+func anthropicPrefill(host string) bool {
+	h := strings.ToLower(host)
+	if s, _, err := net.SplitHostPort(h); err == nil {
+		h = s
+	}
+	return h != "opencode.ai" && !strings.HasSuffix(h, ".opencode.ai")
 }
 
 // chatPrefill is the prefill mode of a Chat upstream at host serving

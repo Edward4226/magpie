@@ -1,9 +1,11 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -649,6 +651,49 @@ func TestStreamCutPrefillRefusedEndsAsBefore(t *testing.T) {
 	}
 }
 
+// OpenCode's gateway serves Claude over Anthropic Messages but turns a
+// conversation ending with an assistant message away, so a cut reply there
+// is never asked to go on: it ends with the cut it started from, and only
+// the one try was made.
+func TestStreamCutOnOpenCodeEndsWithTheCut(t *testing.T) {
+	f := &cutAnthropic{cuts: map[int][]string{0: {anthStart("m", 7), anthText("hel")}}}
+	body := openCodeChatServer(t, "claude-haiku-5-5", f)
+	if f.calls() != 1 {
+		t.Fatalf("calls = %d, want 1: nothing of OpenCode's is asked to go on from a prefill", f.calls())
+	}
+	if got := chatTextOf(body); got != "hel" {
+		t.Fatalf("client's text = %q, want %q", got, "hel")
+	}
+}
+
+// openCodeChatServer points a provider whose only API is Anthropic's at
+// OpenCode's gateway — its host alone, the fake upstream answering — and
+// answers a Chat request for its model.
+func openCodeChatServer(t *testing.T, model string, f *cutAnthropic) string {
+	t.Helper()
+	fresh(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { f.serve(t, w, r) }))
+	t.Cleanup(up.Close)
+	p := provider.Provider{ID: "opencode-go", Name: "OpenCode Go", Key: "k", Models: []string{model},
+		Anthropic: "http://opencode.ai/zen/go", Catalog: "opencode-go"}
+	if err := provider.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	s := New()
+	addr := strings.TrimPrefix(up.URL, "http://")
+	s.client = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"opencode-go/`+model+`","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
 // The tries are each billed, so the reply's usage — the client's and the
 // ledger's — sums them: the cut try's prompt with the continuation's.
 func TestStreamCutUsageSumsTries(t *testing.T) {
@@ -691,9 +736,30 @@ func TestChatPrefill(t *testing.T) {
 	}
 }
 
-// prefillHow: an Anthropic Messages upstream goes on from a trailing
-// assistant message natively, a Chat one in its vendor's own mode, and
-// every other API not at all.
+// anthropicPrefill: Anthropic's own API and the relays that front it go on
+// from a trailing assistant message; OpenCode's gateway serves Claude over
+// Messages but turns that body away.
+func TestAnthropicPrefill(t *testing.T) {
+	for _, c := range []struct {
+		host string
+		want bool
+	}{
+		{"api.anthropic.com", true},
+		{"relay.example.com", true},
+		{"127.0.0.1:8080", true},
+		{"opencode.ai", false},
+		{"opencode.ai:8443", false},
+		{"gateway.opencode.ai", false},
+	} {
+		if got := anthropicPrefill(c.host); got != c.want {
+			t.Errorf("anthropicPrefill(%q) = %v, want %v", c.host, got, c.want)
+		}
+	}
+}
+
+// prefillHow: an Anthropic Messages upstream that takes a trailing
+// assistant message goes on from it, a Chat one in its vendor's own mode,
+// and every other API not at all.
 func TestPrefillHow(t *testing.T) {
 	chat := provider.Provider{Chat: "https://api.moonshot.cn/v1"}
 	if got := prefillHow(chat, provider.Chat, "kimi-k3"); got != "partial" {
@@ -708,6 +774,10 @@ func TestPrefillHow(t *testing.T) {
 	plain := provider.Provider{Chat: "https://api.openai.com/v1"}
 	if got := prefillHow(plain, provider.Chat, "gpt-5"); got != "" {
 		t.Errorf("prefillHow(openai, Chat) = %q, want none", got)
+	}
+	zen := provider.Provider{Anthropic: "https://opencode.ai/zen/go"}
+	if got := prefillHow(zen, provider.Anthropic, "claude-haiku-5-5"); got != "" {
+		t.Errorf("prefillHow(opencode-go, Anthropic) = %q, want none", got)
 	}
 }
 
