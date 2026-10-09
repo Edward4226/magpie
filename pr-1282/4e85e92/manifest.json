@@ -1,0 +1,29 @@
+{
+  "summary": "远程 magpie 的 System One 地址现在从它唯一的对话地址推导：供应商编辑器里不再单独出现 Jev/System One 终结点输入框，且编辑器会收到一份显式的决策模型列表（可以为空），不再按模型名字去猜。",
+  "scenes": [
+    {
+      "title": "远程 magpie 的编辑表单",
+      "shots": [
+        {
+          "file": "01-add-sheet-presets.png",
+          "caption": "「添加供应商」里的预设列表",
+          "width": 2560
+        },
+        {
+          "file": "02-remote-magpie-editor.png",
+          "caption": "远程 magpie 的编辑表单：地址与 API 密钥",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里没有任何远程 magpie 供应商，也没有可连的对端 magpie，所以只靠远程数据才能看到的编辑表单内容——刷新后列出或移除决策模型（含 Clef、自定义名字）、以及 Jev Router 仍留在对话模型列表里——无法展示；本片只展示从「添加供应商」进入远程 magpie 时的编辑表单本身。",
+  "interactive": true,
+  "pages": 1
+}

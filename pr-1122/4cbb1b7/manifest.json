@@ -1,0 +1,56 @@
+{
+  "summary": "新增 Google Vertex AI 预设：供应商编辑器用「项目 ID / 位置 / 凭据文件 / 服务账号」取代 API 密钥，未填项目 ID 时拒绝保存，端点按项目与位置实时拼出地址，列表行上的标记改为说明用哪个 Google 凭据（服务账号、凭据文件或默认凭据，无项目时写「需要项目」）；「用量 → 请求」的协议标记也把 generateContent 大小写通吃，让 Gemini/Vertex 的请求标为 Gemini。",
+  "scenes": [
+    {
+      "title": "供应商：Google Vertex AI 预设与编辑器",
+      "shots": [
+        {
+          "file": "01-add-sheet-vertex-tile.png",
+          "caption": "添加面板中的预设列表",
+          "width": 2496
+        },
+        {
+          "file": "02-vertex-editor-fields.png",
+          "caption": "Google Vertex AI 的编辑器：项目 ID、位置、凭据文件、服务账号",
+          "width": 1296
+        },
+        {
+          "file": "03-vertex-project-required.png",
+          "caption": "未填项目 ID 时点击「添加」后的编辑器",
+          "width": 1296
+        },
+        {
+          "file": "04-vertex-endpoint-editor.png",
+          "caption": "填好项目与位置后「端点」显示的一行",
+          "width": 1120
+        },
+        {
+          "file": "05-vertex-provider-row.png",
+          "caption": "列表里的 Google Vertex AI 行",
+          "width": 2492
+        }
+      ]
+    },
+    {
+      "title": "用量：请求列表的协议标记",
+      "shots": [
+        {
+          "file": "06-usage-requests-proto.png",
+          "caption": "请求列表里每条请求的协议标记一列",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "用量：请求列表的协议标记 · shot #usagePane: nothing visible matches #usagePane (1 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙箱里没有 Vertex AI 供应商，也没有 Google 凭据，所以列表行上的「需要项目」「Google 默认凭据 / 凭据文件 / 服务账号」标记、「测试 / 刷新」按所填项目与凭据真正去问 Google、以及签名失败后的报错，都无法在这里呈现；30 天请求数据里没有经由 Gemini API 或 Vertex 的请求，用量里 Gemini 协议标记与 Vertex 的端点路径同样看不到。",
+  "interactive": true,
+  "pages": 2
+}
