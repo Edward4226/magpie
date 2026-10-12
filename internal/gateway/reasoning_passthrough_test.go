@@ -32,7 +32,13 @@ func (u *deepseekResponses) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u.mu.Unlock()
 	// api.deepseek.com's /v1/responses (deepseek-flash, high, checked
 	// 2026-10-11 for #1592) also refuses a tool call whose step has no
-	// reasoning item, as one of the ChatGPT backend's sealed items leaves it
+	// reasoning item, as one of the ChatGPT backend's sealed items leaves it,
+	// and the note a step begins with as much as the call after it: OpenCode
+	// Go's /zen/go/v1/responses answered a long Codex session's request
+	// (1486 input items, 981,207 tokens, 2026-10-12) with that 400, and the
+	// one item that turns it away is the assistant note its step opens with
+	// (see TestDeepSeekGroupMemberAfterChatGPT's "a note that ends the
+	// request").
 	thought := false
 	for _, it := range q.Input {
 		ok := true
@@ -46,6 +52,8 @@ func (u *deepseekResponses) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case it["type"] == "function_call":
+			ok = thought
+		case it["type"] == "message" && it["role"] == "assistant":
 			ok = thought
 		case it["type"] == "function_call_output", it["role"] == "user":
 			thought = false
@@ -155,6 +163,7 @@ func TestDeepSeekGroupMemberAfterChatGPT(t *testing.T) {
 		  {"type":"function_call_output","call_id":"` + id + `","output":"main.go"}`
 	}
 	sealed := `{"type":"reasoning","id":"rs_0d1f","summary":[],"content":null,"encrypted_content":"gAAAAABpZm9vYmFy"}`
+	note := `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Now update the index."}]}`
 	if err := provider.SaveGroup(provider.Group{ID: "codex-different", Name: "codex-different", Members: []string{"deepseek/deepseek-flash"}, Routing: provider.Ordered}); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +171,10 @@ func TestDeepSeekGroupMemberAfterChatGPT(t *testing.T) {
 		"sealed by ChatGPT": user + `,` + sealed + `,` + call("call_1"),
 		"no reasoning item": user + `,` + call("call_1"),
 		"second step bare":  user + `,` + sealed + `,` + call("call_1") + `,` + call("call_2"),
-		"an assistant note": user + `,{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking."}]},` + call("call_1"),
+		"an assistant note": user + `,` + note + `,` + call("call_1"),
+		// the shape OpenCode Go turned away: a note opens the step after a
+		// tool result, and nothing after it
+		"a note that ends the request": user + `,` + call("call_1") + `,` + note,
 	} {
 		for _, model := range []string{"deepseek/deepseek-flash", "group/codex-different"} {
 			code, b := post(t, "/v1/responses", `{"model":"`+model+`","stream":true,"store":false,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],
@@ -215,5 +227,40 @@ func TestTranslatedDeepSeekCallWithoutReasoning(t *testing.T) {
 	}
 	if b := buildResponses(r, "gpt-5.4", "relay.example", false); strings.Contains(string(b), `"reasoning_text"`) {
 		t.Fatalf("gpt-5.4 was given reasoning: %s", b)
+	}
+}
+
+// A translated turn's assistant note that begins a step goes after a
+// reasoning item all the same (#1592, OpenCode Go): the note reads as the
+// step's own first item, and the call it is about follows it, so the item
+// magpie gave the call has to go before the note, not after it.
+func TestTranslatedDeepSeekNoteWithoutReasoning(t *testing.T) {
+	r, err := parseResponses([]byte(`{"model":"m","input":[
+		{"type":"message","role":"user","content":"hi"},
+		{"type":"function_call","call_id":"c1","name":"sh","arguments":"{}"},
+		{"type":"function_call_output","call_id":"c1","output":"ok"},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Now the index."}]},
+		{"type":"function_call","call_id":"c2","name":"sh","arguments":"{}"},
+		{"type":"function_call_output","call_id":"c2","output":"ok"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var q struct {
+		Input []struct {
+			Type    string  `json:"type"`
+			Content []rText `json:"content"`
+		} `json:"input"`
+	}
+	json.Unmarshal(buildResponses(r, "deepseek-flash", "api.deepseek.com", false), &q)
+	var got []string
+	for _, it := range q.Input {
+		s := it.Type
+		if it.Type == "reasoning" && len(it.Content) == 1 {
+			s += "=" + it.Content[0].Text
+		}
+		got = append(got, s)
+	}
+	if want := "message,reasoning= ,function_call,function_call_output,reasoning= ,message,function_call,function_call_output"; strings.Join(got, ",") != want {
+		t.Fatalf("sent %s\nwant %s", strings.Join(got, ","), want)
 	}
 }

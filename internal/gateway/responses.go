@@ -694,15 +694,19 @@ func replaysReasoning(model, host string) bool {
 
 // withReasoningText gives each reasoning item in a Responses request that
 // carries no reasoning_text its summary as one, else noReasoning, and each
-// tool call a step made with no reasoning item one holding noReasoning, for
-// an upstream that wants the reasoning back (replaysReasoning). Codex sends
-// an item back as it got it: one from a turn magpie translated has only a
-// summary, one the ChatGPT backend sealed has only encrypted_content, and a
-// turn another model in a mixed group served may have no reasoning item at
-// all. DeepSeek refuses the whole request over any of them, and over an
-// empty reasoning_text, with "The `reasoning_text` in the thinking mode must
-// be passed back to the API" (#1104, #1592). A body with nothing to give
-// comes back byte for byte.
+// thing a step begins with that has no reasoning item one holding
+// noReasoning, for an upstream that wants the reasoning back
+// (replaysReasoning). Codex sends an item back as it got it: one from a turn
+// magpie translated has only a summary, one the ChatGPT backend sealed has
+// only encrypted_content, and a turn another model in a mixed group served
+// may have no reasoning item at all. DeepSeek refuses the whole request over
+// any of them, and over an empty reasoning_text, with "The `reasoning_text`
+// in the thinking mode must be passed back to the API" (#1104, #1592). A
+// step begins with the note the model writes before it acts as much as with
+// the call the note is about: OpenCode Go's DeepSeek turns away a long
+// Codex session's request whose note is left without one, so a note that
+// begins a step gets the same item a bare call does. A body with nothing to
+// give comes back byte for byte.
 func withReasoningText(body []byte) []byte {
 	if !bytes.Contains(body, []byte(`"reasoning"`)) && !bytes.Contains(body, []byte(`_call"`)) {
 		return body
@@ -734,7 +738,7 @@ func withReasoningText(body []byte) []byte {
 		switch {
 		case it.Type == "reasoning":
 			thought = true
-		case it.Type == "function_call", it.Type == "custom_tool_call":
+		case it.Type == "function_call", it.Type == "custom_tool_call", it.Type == "message" && it.Role == "assistant":
 			if !thought {
 				r, _ := json.Marshal(map[string]any{"type": "reasoning", "summary": []any{},
 					"content": []map[string]string{{"type": "reasoning_text", "text": noReasoning}}})
@@ -809,6 +813,14 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 		flushMsg := func() {
 			if len(content) == 0 {
 				return
+			}
+			if replay && m.Role == "assistant" && !thought {
+				// an assistant note that begins a step: its reasoning item,
+				// which DeepSeek wants before the note and not only before
+				// the call the note is about (#1592)
+				input = append(input, map[string]any{"type": "reasoning", "summary": []any{},
+					"content": []map[string]any{{"type": "reasoning_text", "text": noReasoning}}})
+				thought = true
 			}
 			input = append(input, map[string]any{"type": "message", "role": m.Role, "content": content})
 			content = nil
