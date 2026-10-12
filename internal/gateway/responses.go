@@ -481,6 +481,100 @@ func parseResponses(body []byte) (*Request, error) {
 	return r, nil
 }
 
+// toolCallItem is a Responses input item that makes a tool call, and
+// toolResultItem one that answers a call.
+func toolCallItem(t string) bool {
+	switch t {
+	case "function_call", "custom_tool_call", "tool_search_call":
+		return true
+	}
+	return false
+}
+
+func toolResultItem(t string) bool {
+	switch t {
+	case "function_call_output", "custom_tool_call_output", "tool_search_output":
+		return true
+	}
+	return false
+}
+
+// joinToolRuns moves an item that sits inside a run of tool calls and
+// results — between a call and the result that answers it — to the end of
+// that run. An upstream that checks the exchange, on the chat form it turns
+// a relayed request into or on the Responses input itself, reads the run as
+// ended there and refuses it: Volcengine's coding plan answers 400 "An
+// assistant message with 'tool_calls' must be followed by tool messages
+// responding to each 'tool_call_id'", the same refusal pairToolItems mends
+// a missing result for (#1341), and OpenCode Zen/Go answers "No tool output
+// found for tool call <id>". An agent writes an item between one batch's
+// results itself: Codex writes its <image_resize_notice> there when a tool
+// returned an image it resized. An item between two exchanges that are each
+// whole is left where it is, and a request with nothing inside a run comes
+// back byte for byte.
+func joinToolRuns(body []byte) []byte {
+	if !bytes.Contains(body, []byte(`_call"`)) {
+		return body
+	}
+	var q map[string]json.RawMessage
+	if decodeJSON(body, &q) != nil {
+		return body
+	}
+	var input []json.RawMessage
+	if decodeJSON(q["input"], &input) != nil {
+		return body
+	}
+	type item struct {
+		Type   string `json:"type"`
+		CallID string `json:"call_id"`
+	}
+	items := make([]item, len(input))
+	answered := map[string]bool{} // call IDs a result in the request answers
+	for i, raw := range input {
+		if decodeJSON(raw, &items[i]) != nil {
+			items[i] = item{}
+		}
+		if toolResultItem(items[i].Type) && items[i].CallID != "" {
+			answered[items[i].CallID] = true
+		}
+	}
+	out := make([]json.RawMessage, 0, len(input))
+	var held []json.RawMessage
+	moved := false
+	// open: calls of the run in progress whose result is still ahead. A run
+	// is open while one of its calls has been seen and its result has not.
+	open := map[string]bool{}
+	for i, raw := range input {
+		t, id := items[i].Type, items[i].CallID
+		switch {
+		case toolCallItem(t):
+			if id != "" && answered[id] {
+				open[id] = true
+			}
+		case toolResultItem(t) && id != "":
+			delete(open, id)
+		case len(open) > 0:
+			held, moved = append(held, raw), true
+			continue
+		}
+		out = append(out, raw)
+		if len(open) == 0 && len(held) > 0 {
+			out = append(out, held...)
+			held = nil
+		}
+	}
+	out = append(out, held...)
+	if !moved {
+		return body
+	}
+	q["input"], _ = marshalPlain(out)
+	encoded, err := marshalPlain(q)
+	if err != nil {
+		return body
+	}
+	return encoded
+}
+
 // orphanedToolOutputs turns a tool result with no call ID into a user message.
 // Codex uses standalone outputs for cross-thread notifications. Backends
 // requiring paired outputs still need the delivered text, without a fake call ID.
@@ -602,12 +696,7 @@ func pairToolItems(body []byte) []byte {
 		}
 	}
 	exchange := func(t string) bool {
-		switch t {
-		case "function_call", "custom_tool_call", "tool_search_call",
-			"function_call_output", "custom_tool_call_output", "tool_search_output":
-			return true
-		}
-		return false
+		return toolCallItem(t) || toolResultItem(t)
 	}
 	out := make([]json.RawMessage, 0, len(input)+1)
 	var synthetic []json.RawMessage // results owed by the run in progress
