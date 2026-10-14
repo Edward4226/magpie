@@ -15520,6 +15520,20 @@ function balanceAmount(sub, v) {
   const m = (sub.balance || "").match(/^(.*?)-?\d[\d,]*(?:\.\d+)?(.*)$/);
   return m ? m[1] + n + m[2] : n;
 }
+// valueBand(values, floor): the range a plot draws, which is what it has
+// with a little room around it. A prepaid key drifting cents a day sat in a
+// sliver of an axis from zero and drew as a flat line (#2079); floor, where
+// the plot is about that value, holds it in view while it is within reach.
+function valueBand(values, floor) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!(lo <= hi)) return [0, 1];
+  const pad = hi > lo ? (hi - lo) * 0.12 : Math.abs(hi) * 0.05 || 1;
+  lo -= pad;
+  hi += pad;
+  if (floor != null && lo < floor && floor < hi) lo = floor;
+  return [lo, hi];
+}
 // balanceCurve: a key's balance over time, as magpie read it, under its
 // figure on the Usage page (TJHHHH on Discord): the line, the least-squares
 // line through it since the last top-up dashed on to where it meets zero
@@ -15556,14 +15570,19 @@ function balanceCurve(sub) {
     if (!(x0 < now)) x0 = now - 3600e3;
     // the dashes reach zero when it is no further off than what is shown
     if (out && out > now && out - now <= now - x0) x1 = out;
-    const top = Math.max(...pts.filter((p) => p.at >= x0).map((p) => p.v), last.v, tr.fitStart || 0) * 1.08 || 1;
-    const X = (at) => ((at - x0) / (x1 - x0)) * W, Y = (v) => H - (Math.max(0, Math.min(top, v)) / top) * H;
+    // The axis fits the readings, not zero to the highest of them: a key
+    // spending a few cents a day is otherwise a dead flat line. Zero joins
+    // the fit only when the dashes reach it inside what is shown, so they
+    // meet the foot on the right; short of that they run off it.
+    const [lo, hi] = valueBand([...pts.filter((p) => p.at >= x0).map((p) => p.v), last.v, tr.fitStart ?? last.v], x1 === out ? 0 : null);
+    const X = (at) => ((at - x0) / (x1 - x0)) * W, Y = (v) => H - ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * H;
+    const Yfit = (v) => H - ((v - lo) / (hi - lo)) * H;
     g.replaceChildren();
     for (const f of [0, 0.5, 1]) g.append(sv("line", { x1: 0, x2: W, y1: H - f * H, y2: H - f * H, class: "qc-grid" }));
     if (tr.fitFrom) {
       const from = Date.parse(tr.fitFrom), slope = (tr.fitNow - tr.fitStart) / (now - from || 1);
       const end = out && x1 === out ? out : now;
-      g.append(sv("line", { x1: X(from), y1: Y(tr.fitStart), x2: X(end), y2: Y(tr.fitStart + slope * (end - from)), class: "qc-even bc-fit" }, { stroke: "var(--c1)" }));
+      g.append(sv("line", { x1: X(from), y1: Yfit(tr.fitStart), x2: X(end), y2: Yfit(tr.fitStart + slope * (end - from)), class: "qc-even bc-fit" }, { stroke: "var(--c1)" }));
     }
     let d = "";
     for (let i = 0; i < pts.length; i++) {

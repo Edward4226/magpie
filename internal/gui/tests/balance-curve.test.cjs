@@ -6,6 +6,10 @@
 // day in its legend. A click on the plot makes it larger, another back, and
 // neither moves the page; Enter does the same. A key of one reading has no
 // curve, and the allowances' "Off" takes it away too.
+// The plot draws the balance's own range, not zero to its highest reading:
+// a key spending a few cents a day drew as one flat line (#2079), so the
+// drift below must reach the plot's own height while the top-up above keeps
+// its curve inside the box and its dashes reaching zero on the right.
 // English and Chinese, light and dark; no backend, the API is faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -15,16 +19,22 @@ const { chromium, webkit } = require("playwright");
 
 const assets = path.resolve(__dirname, "../assets");
 const H = 3600e3;
+const D = 24 * H;
 const iso = (ms) => new Date(ms).toISOString();
 
 function fixtures(now) {
   // a top-up to ¥50 two days ago, ¥10 a day spent since
   const points = [[96, 5], [72, 3], [48, 50], [36, 45], [24, 40], [12, 35], [0, 30]].map(([h, v]) => ({ at: iso(now - h * H), amount: v }));
+  // a prepaid key drifting ¢8.43 a day: ¥12.30 a fortnight ago, ¥11.12 now
+  const drift = [];
+  for (let d = 14; d >= 0; d--) drift.push({ at: iso(now - d * D), amount: 12.3 - (14 - d) * 0.0843 });
   return [
     { provider: "deepseek", name: "DeepSeek", icon: "deepseek", windows: [], balance: "¥30.00", readAt: iso(now),
       balanceTrend: { points, fitFrom: iso(now - 48 * H), fitStart: 50, fitNow: 30, perDay: 10, runsOut: iso(now + 72 * H) } },
     { provider: "moonshot", name: "Moonshot", icon: "moonshot", windows: [], balance: "$12.00", readAt: iso(now),
       balanceTrend: { points: [{ at: iso(now), amount: 12 }] } },
+    { provider: "relay", name: "Relay", icon: "generic", windows: [], balance: "¥11.12", readAt: iso(now),
+      balanceTrend: { points: drift, fitFrom: iso(now - 14 * D), fitStart: 12.3, fitNow: 11.12, perDay: 0.0843, runsOut: iso(now + 132 * D) } },
   ];
 }
 
@@ -123,6 +133,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await plot.getAttribute("aria-expanded"), "true", "Enter enlarges it too");
         assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), top, "Enter moved the page");
       }
+
+      // a prepaid key drifting cents a day: the plot fits the readings, so
+      // its slope reads (#2079); an axis from zero drew it as a flat line
+      const drift = await open("drift", "light");
+      const dc = drift.locator(".subscription-card", { hasText: "Relay" }).locator(".balance-curve");
+      await dc.waitFor();
+      const size = await dc.locator(".qc-plot").boundingBox();
+      const drawn = await dc.locator("path.qc-line").boundingBox();
+      assert.ok(drawn.height >= size.height * 0.6, `its slope is drawn, not flattened: ${drawn.height.toFixed(1)} of ${size.height}`);
+      const box = await dc.locator(".qc-plot").evaluate((e) => e.getAttribute("viewBox").split(/\s+/).slice(2).map(Number));
+      const fit = await dc.locator("line.bc-fit").evaluate((e) => ["x1", "y1", "x2", "y2"].map((a) => +e.getAttribute(a)));
+      assert.ok(fit[1] > 0 && fit[3] - fit[1] >= box[1] * 0.5, `the dashes follow it down the plot: ${fit}`);
+      assert.ok(fit[3] <= box[1] + 0.5, `and stay inside it, the cut at the foot doing the rest: ${fit[3]}`);
 
       // the allowances' Off takes the balance's curve away too
       const off = await open("off", "light", "off");
