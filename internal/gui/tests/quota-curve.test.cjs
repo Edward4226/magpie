@@ -207,8 +207,10 @@ function serve(lang, theme, panel, data) {
 }
 
 const words = {
-  en: { head: "Left over time", two: "2 days", cycle: "Cycle", off: "Off", trend: (r) => "Trends: " + r, five: "5 hours", week: "Weekly", dashes: /Dashed: an even pace/ },
-  zh: { head: "剩余额度走势", two: "2 天", cycle: "本周期", off: "关闭", trend: (r) => "走势：" + r, five: "5 小时", week: "每周", dashes: /虚线：匀速用量/ },
+  en: { head: "Left over time", two: "2 days", cycle: "Cycle", off: "Off", trend: (r) => "Trends: " + r, five: "5 hours", week: "Weekly", dashes: /Dashed: an even pace/,
+    lasts: "Lasts past the reset at this pace", runsOut: /^Runs out .+ at this pace$/ },
+  zh: { head: "剩余额度走势", two: "2 天", cycle: "本周期", off: "关闭", trend: (r) => "走势：" + r, five: "5 小时", week: "每周", dashes: /虚线：匀速用量/,
+    lasts: "按此速度，能撑到重置", runsOut: /^按此速度，预计 .+ 用完$/ },
 };
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -226,12 +228,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       const errors = [];
       const data = fixtures(Date.now());
-      const open = async (name, url, theme, viewport) => {
+      const open = async (name, url, theme, viewport, over) => {
         const page = await (await browser.newContext({ viewport, reducedMotion: "reduce" })).newPage();
         pages.push([name, page]);
         page.setDefaultTimeout(5000);
         page.on("pageerror", (e) => errors.push(e.message));
-        await page.route("**/*", serve(lang, theme, url.includes("mode=panel"), data));
+        await page.route("**/*", serve(lang, theme, url.includes("mode=panel"), over || data));
         await page.goto(url);
         return page;
       };
@@ -248,6 +250,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await pick.textContent(), w.trend(w.cycle), "Cycle first");
         assert.equal(await page.locator(".quota-curve .segs, .quota-curve button:not(.qc-range), .quota-curve select").count(), 0, "only the account's cycle picker on a card");
         assert.equal(await curve.locator(".qc-range").textContent(), w.cycle);
+        // the window whose reset is furthest off, in words: a 52px plot
+        // leaves the reader to work out which side of the dashes it is on,
+        // and that is the only question the curve is asked (#2079)
+        assert.equal(await curve.locator(".qc-pace").textContent(), w.lasts);
         // a line a window, now; the 5-hour window, a comb over the week's
         // cycle, faint and without its upright even burn
         assert.equal(await curve.locator("path.qc-line").count(), 2);
@@ -314,7 +320,29 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       }
       assert.notEqual(strokes.light, strokes.dark, "dark has its own line colour");
 
+      // the same card, a week emptying before its reset: the words turn
+      // around, and a reading taken this cycle is all a pace needs (#2079)
+      const rw = Date.parse(data.quotas[0].windows[1].resetsAt), t0 = Date.now();
+      data.history[0].lines[1].points = [
+        { at: iso(t0 - 48 * H), left: 60, start: iso(rw - 168 * H), resetsAt: iso(rw) },
+        { at: iso(t0 - 24 * H), left: 40, start: iso(rw - 168 * H), resetsAt: iso(rw) },
+        { at: iso(t0), left: 20, start: iso(rw - 168 * H), resetsAt: iso(rw) },
+      ];
+      const counting = await open("counting", "http://magpie.test/?view=usage", "light", { width: 900, height: 620 });
+      const countingCurve = counting.locator(".subscription-card", { hasText: "Codex" }).locator(".quota-curve").first();
+      await countingCurve.waitFor();
+      assert.match(await countingCurve.locator(".qc-pace").textContent(), w.runsOut);
+
       // the tray: a thin line of the 5-hour window's cycle, across the card
+      // Its own readings, three over three hours: clearly slower than the
+      // window's even burn, so the pace has one answer rather than landing
+      // exactly on the deadline (a tie, and a tie is no test) (#2079)
+      const p0 = Date.now();
+      data.history[0].lines[0].points = [
+        { at: iso(p0 - 3 * H), left: 100, start: iso(p0 - 3 * H), resetsAt: iso(p0 + 2 * H) },
+        { at: iso(p0 - 2 * H), left: 85, start: iso(p0 - 3 * H), resetsAt: iso(p0 + 2 * H) },
+        { at: iso(p0 - 1 * H), left: 70, start: iso(p0 - 3 * H), resetsAt: iso(p0 + 2 * H) },
+      ];
       const panel = await open("panel", "http://magpie.test/?mode=panel", "dark", { width: 440, height: 640 });
       await panel.locator('#ptabs [data-ptab="usage"]').click();
       const pcard = panel.locator(".pq-card", { hasText: "a@x.com" });
@@ -323,6 +351,18 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await spark.locator("path.qc-line").count(), 1);
       assert.equal((((await spark.locator("path.qc-line").getAttribute("d")).match(/M/g)) || []).length, 1, "the current cycle only");
       assert.equal(await spark.locator("line.qc-even").count(), 1);
+      // and the pace of the window that thin line draws, by its deadline
+      assert.equal(await pcard.locator(".pq-pace").textContent(), " · " + w.lasts);
+      // a window magpie has read nothing of this cycle says nothing, rather
+      // than reading a pace from nothing (#2079)
+      const quiet = JSON.parse(JSON.stringify(data));
+      quiet.history[0].lines[0].points = [];
+      const silent = await open("silent", "http://magpie.test/?mode=panel", "dark", { width: 440, height: 640 }, quiet);
+      await silent.locator('#ptabs [data-ptab="usage"]').click();
+      const scard = silent.locator(".pq-card", { hasText: "a@x.com" });
+      await scard.waitFor();
+      assert.equal(await scard.locator(".pq-pace").count(), 0, "nothing to say, nothing said");
+      assert.ok((await scard.locator(".pq-sub").textContent()).includes("↻"), "the deadline is still said");
       // the line ends at now already; in 16px a dotted now line read as a
       // stray mark under the curve (#1601)
       assert.equal(await spark.locator("line.qc-now").count(), 0, "no now line in the thin spark");
