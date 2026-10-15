@@ -350,8 +350,8 @@ func loggedAnswers(convs ...string) []loggedAnswer {
 		if r.Provider == "" || r.Provider == "magpie" || r.IsRejected() || r.IsReported() || r.Status <= 0 || r.Status >= 400 || r.Computer != "" || isTitleKind(r.Kind) {
 			return
 		}
-		if r.Provider == "openai" && strings.HasPrefix(r.Endpoint, CodexPath) {
-			return // Codex's own sign-in
+		if (r.Provider == "openai" || r.Provider == "codex") && strings.HasPrefix(r.Endpoint, CodexPath) {
+			return // Codex's own sign-in, under either name it is logged by
 		}
 		if !slices.Contains(convs, r.NativeSession) && !slices.Contains(convs, r.Session) {
 			return
@@ -692,6 +692,9 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	if apiKey(r.Header) && rest != "/models" {
 		base = codexAPIBase
 	}
+	// what the call is recorded as served by: Codex's own sign-in is the
+	// codex subscription's, never a provider of its own
+	servedProvider, servedAccount := codexServed(base, r.Header, on)
 	if r.Method == http.MethodPost && rest == "/responses" && base == provider.CodexBase {
 		// a replayed web search the request doesn't declare the tool for
 		// is refused by the ChatGPT backend (#1270), as on an account's
@@ -972,7 +975,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	}
 	end(call.Status, call.Error, uu.Input+uu.Output+uu.CacheRead+uu.CacheWrite, uu.Output)
 	s.record(call)
-	rec := usage.Record{RouteID: tr.ID, Time: start, Agent: call.Agent, Provider: call.Provider, Host: provider.HostOf(base), Model: call.Model,
+	rec := usage.Record{RouteID: tr.ID, Time: start, Agent: call.Agent, Provider: servedProvider, Host: provider.HostOf(base), ProviderAccount: servedAccount, Model: call.Model,
 		Requested: call.Model, Served: served,
 		Input: uu.Input, Output: uu.Output, CacheRead: uu.CacheRead, CacheWrite: uu.CacheWrite,
 		Reasoning: uu.Reasoning, Effort: effort, Millis: call.Millis,
@@ -981,6 +984,32 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 		RequestID: requestID(res.Header), ResponseID: uu.ResponseID, Endpoint: r.URL.Path}
 	failedWith(&rec, call.Status, call.Error, errType)
 	appendUsage(r, rec)
+}
+
+// codexServed is the provider a codex backend call is recorded as served
+// by, and the account that answered it: Codex's own sign-in is the codex
+// subscription's — its account when it stands in for Codex's own
+// (compactOn), else the one Codex is signed in to — and a call sent to
+// OpenAI's own API with Codex's key is "openai", which no subscription of
+// magpie's is.
+//
+// Recorded as "openai" alone, every turn the Codex agent makes was put to
+// a provider magpie has no card for: the Usage page listed its models
+// under an account-less "openai", and an account card's window reckoned
+// its whole from the calls that went another way, reading a fraction of
+// what the account spent (a week's used 28% read $0.31 where the calls it
+// answered came to $64.26).
+func codexServed(base string, h http.Header, on *provider.Provider) (id, account string) {
+	if base != provider.CodexBase || apiKey(h) {
+		return "openai", ""
+	}
+	if on != nil && on.Account != nil {
+		return on.ID, on.Account.User
+	}
+	if p, err := provider.Find("codex"); err == nil && p.Account != nil {
+		return p.ID, p.Account.User
+	}
+	return "openai", ""
 }
 
 // unreadableItem is the item OpenAI's refusal names: sealed content it

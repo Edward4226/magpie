@@ -80,6 +80,67 @@ func TestCodexOwnModelPassesThrough(t *testing.T) {
 	}
 }
 
+// A turn on one of Codex's own models, relayed on Codex's own sign-in, is
+// the codex subscription's in the ledger, the account named: recorded as
+// "openai" with no account, every such turn was put to a provider magpie
+// has no card for, and an account card's window reckoned its whole from
+// the calls that went another way (a week used 28% read $0.31 where the
+// calls it answered came to $64.26).
+func TestCodexOwnModelRecordedAsCodexAccount(t *testing.T) {
+	setup(t, provider.Chat, &fake{t: t})
+	chatgpt(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, sse(`data: {"type":"response.completed","response":{"id":"r1","usage":{"input_tokens":9,"output_tokens":2}}}`))
+	})
+	// Codex signed in to ChatGPT: the account its own turns go on
+	codexHome := filepath.Join(os.Getenv("HOME"), ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claims, _ := json.Marshal(map[string]any{"email": "me@example.com"})
+	idToken := "h." + base64.RawURLEncoding.EncodeToString(claims) + ".x"
+	auth, _ := json.Marshal(map[string]any{"auth_mode": "chatgpt", "tokens": map[string]string{
+		"id_token": idToken, "access_token": "tok", "refresh_token": "rt", "account_id": "acct-1"}})
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), auth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider.ForgetAccounts()
+	if code, body := codexPost(t, `{"model":"gpt-5.5","stream":true,"input":"hi"}`); code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	u := usage.Load(time.Time{})
+	if len(u) != 1 || u[0].Provider != "codex" || u[0].ProviderAccount != "me@example.com" || u[0].Input != 9 || u[0].Output != 2 {
+		t.Errorf("usage %+v", u)
+	}
+}
+
+// The account it is recorded under doesn't make Codex's own sign-in a
+// provider that answered a lead: a lead it answered is still told of as
+// one sealed by the ChatGPT backend, under either of the two names such
+// a turn is logged by.
+func TestCodexOwnModelAnswersNoLead(t *testing.T) {
+	setup(t, provider.Chat, &fake{t: t})
+	for _, r := range []usage.Record{
+		{Provider: "codex", ProviderAccount: "me@example.com"},
+		{Provider: "openai", ProviderAccount: ""},
+	} {
+		rec := usage.Record{RouteID: 1, Time: time.Now(), Agent: "codex", Provider: r.Provider, Host: provider.HostOf(provider.CodexBase),
+			ProviderAccount: r.ProviderAccount, Model: "gpt-5.5", Requested: "gpt-5.5", Input: 9, Output: 2, Status: 200,
+			Endpoint: CodexPath + "/responses", Session: "lead-conversation"}
+		usage.Append(rec)
+		if a := loggedAnswers("lead-conversation"); len(a) != 0 {
+			t.Fatalf("%s/%s answered a lead: %+v", r.Provider, r.ProviderAccount, a)
+		}
+	}
+	// one that went another way is an answer as any other is
+	usage.Append(usage.Record{RouteID: 1, Time: time.Now(), Agent: "codex", Provider: "sub2api", Host: "relay.example.com",
+		Model: "gpt-5.5", Requested: "gpt-5.5", Input: 9, Output: 2, Status: 200, Endpoint: CodexPath + "/responses", Session: "lead-conversation"})
+	if a := loggedAnswers("lead-conversation"); len(a) != 1 || a[0].provider != "sub2api" {
+		t.Fatalf("a relay's answer: %+v", a)
+	}
+}
+
 // A turn on one of Codex's own models shows in the Routing view's live
 // trace, as those on magpie's do.
 func TestCodexOwnModelTraced(t *testing.T) {
