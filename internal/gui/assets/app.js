@@ -18079,8 +18079,9 @@ function drawLedColumns(box, l, split, metric, compact, chooseDay, focusDay) {
 // the ranking: who the requests were of, by the metric, the most first —
 // each with its share, its other figures, and a click that lists only its
 // requests (a provider or an agent), or those of its model. picked is the
-// one the filter has picked, if any; the ones past the chart's colours are
-// left out of it and said in a line.
+// one the filter has picked, if any. The page lists every one, those past
+// the chart's colours in the grey the chart's "Other" wears and still a way
+// in; the tray's small ranking, with no room to scroll, keeps them in one line.
 function drawLedRank(box, l, split, metric, picked, choose, compact) {
   // a redraw (a pick, a refresh) leaves the ranking scrolled where it was
   const kept = box.scrollTop;
@@ -18134,12 +18135,14 @@ function drawLedRank(box, l, split, metric, picked, choose, compact) {
     return b;
   };
   for (const x of top) box.append(one(x, x.color));
-  if (rest.length) {
+  if (compact && rest.length) {
     const tot = rest.reduce((acc, x) => {
       for (const k of ["calls", "errors", "loops", "input", "output", "cache_read", "cache_write", "cost", "timed", "ttft_ms", "decode_ms", "decode_out", "decode_n", "floor_out", "floor_ms", "floor_n"]) acc[k] = (acc[k] || 0) + (x[k] || 0);
       return acc;
     }, { id: "\0other", name: t("Other ({n})", { n: rest.length }) });
     box.append(one(tot, "var(--faint)", true));
+  } else {
+    for (const x of rest) box.append(one(x, "var(--faint)"));
   }
   box.scrollTop = kept;
   box.onscroll = () => ledRankEdges(box);

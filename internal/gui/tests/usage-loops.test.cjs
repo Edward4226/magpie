@@ -2,9 +2,10 @@
 // Usage says, per model, how many of its replies magpie ended because the
 // model was stuck in a loop (#1858, err_type "reply_loop"): beside "{n}
 // failed" in the Overview's model rows and in the Requests ranking, the
-// ranking's "Other" adding up those it holds. A model with none says
-// nothing of it. Nothing runs past the window at 360 or 1100 wide, in
-// every language, Chromium and WebKit; the API is faked.
+// ranking listing every model, those past the chart's colours as rows of
+// their own. A model with none says nothing of it. Nothing runs past the
+// window at 360 or 1100 wide, in every language, Chromium and WebKit; the
+// API is faked.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -16,7 +17,7 @@ const looped = { en: "{n} looped", zh: "{n} 次陷入循环", "zh-TW": "{n} 次�
 
 const share = (id, calls, errors, loops) => ({ id, calls, errors, loops, input: 1000 * calls, output: 50 * calls, cache_read: 0, cache_write: 0, cost: 0, unpriced: calls });
 // kimi looped twice of 3 failures; glm failed once, not for looping; and
-// past the 7 shown, two more that looped once each, in "Other"
+// past the 7 shown, two more that looped once each, now rows of their own
 const BY = [share("kimi-k3", 40, 3, 2), share("glm-5", 30, 1, 0), ...["a", "b", "c", "d", "e"].map((x, i) => share("m-" + x, 20 - i, 0, 0)),
   share("tail-1", 2, 1, 1), share("tail-2", 1, 1, 1)];
 
@@ -85,13 +86,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert(glm && !glm.includes(n(0)) && !glm.includes(n(1)), `glm's row: ${glm}`);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the page scrolls sideways");
 
-        // Requests: the ranking says it of kimi, not of glm, and Other adds
-        // up its two
+        // Requests: the ranking says it of kimi, not of glm, and lists each
+        // of the two past the chart's colours on its own row
         page = await open("requests");
         const rank = page.locator("#ledRank .rk-loop");
         await rank.first().waitFor();
         const loops = await rank.allTextContents();
-        assert.deepEqual(loops, [n(2), n(2)], "kimi's 2, and Other's 1 + 1");
+        assert.deepEqual(loops, [n(2), n(1), n(1)], "kimi's 2, then each tail model's 1");
         const rk = await page.locator("#ledRank > *").allTextContents();
         assert(!rk.find((x) => x.includes("glm-5")).includes(n(0)));
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the page scrolls sideways");

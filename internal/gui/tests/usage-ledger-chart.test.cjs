@@ -448,6 +448,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     await t.test("a long ranking is as tall as the chart and scrolls in itself", async () => {
       const { p, errors, asked } = await open("en", "light", { variant: "many" });
       await p.locator("#ledRank .rk").nth(7).waitFor();
+      // the page lists every provider: no "Other" total row, and the ones
+      // past the chart's seven colours stand as grey rows of their own
+      assert.equal(await p.locator("#ledRank .rk").count(), 9, "every provider listed");
+      assert.equal(await p.locator("#ledRank .rk.plain").count(), 0, "no Other row on the page");
+      assert.equal(await p.locator("#ledRank .rk").nth(8).locator(".rk-nm").textContent(), "Provider 8");
+      assert.equal(await p.locator("#ledRank .rk").nth(8).locator(".rk-sw").evaluate((e) => e.style.background), "var(--faint)", "past the chart's colours, in grey");
       const box = async () => {
         const chart = await p.locator("#ledChart").boundingBox(), rank = await p.locator("#ledRank").boundingBox();
         const [top, height, client] = await p.locator("#ledRank").evaluate((r) => [r.scrollTop, r.scrollHeight, r.clientHeight]);
@@ -530,6 +536,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       seen = await look();
       assert(seen.above && !seen.below, "at the end, only the head fades");
       assert(await p.locator("#ledRail").isVisible(), "wide again, the rail is back");
+      // the grey rows past the chart's colours are real rows and a way in:
+      // a click lists only that provider, as one of the first seven would
+      await p.locator("#ledRank .rk").nth(8).click();
+      await lastAsked(asked, (q) => q.get("provider") === "p8");
       assert.deepEqual(errors, []);
       // headless hides scrollbars: Chromium drawing the classic one, as macOS
       // does with a mouse plugged in, has none on the ranking either
