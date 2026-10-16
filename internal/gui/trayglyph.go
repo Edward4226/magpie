@@ -59,6 +59,60 @@ func trayIconFor(goos string, light bool) (icon []byte, template bool) {
 	return appIcon, false
 }
 
+// windowsTrayIcon is the app's own icon with the transparent border around
+// its content trimmed, so the drawing fills the slot Windows scales the tray
+// icon into: icon.png is 64×64 with 6px clear on each side, and the 16×16
+// slot then leaves the picture about 13×13 (#2404). Windows is the only
+// system the app's own icon goes to, so its tile stays; the Mac and Linux
+// keep the menu bar bird, whose clear space is the glyph's own. The icon
+// goes back unchanged when it can't be read as a PNG, when it has no clear
+// border to trim, or when re-encoding the trimmed drawing fails.
+func windowsTrayIcon(icon []byte) []byte {
+	src, err := png.Decode(bytes.NewReader(icon))
+	if err != nil {
+		return icon
+	}
+	b := src.Bounds()
+	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, b.Min.X, b.Min.Y
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA).A == 0 {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x >= maxX {
+				maxX = x + 1
+			}
+			if y >= maxY {
+				maxY = y + 1
+			}
+		}
+	}
+	if minX >= maxX || minY >= maxY {
+		return icon
+	}
+	box := image.Rect(minX, minY, maxX, maxY)
+	if box == b {
+		return icon
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, box.Dx(), box.Dy()))
+	for y := box.Min.Y; y < box.Max.Y; y++ {
+		for x := box.Min.X; x < box.Max.X; x++ {
+			out.SetNRGBA(x-box.Min.X, y-box.Min.Y, color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA))
+		}
+	}
+	var buf bytes.Buffer
+	if png.Encode(&buf, out) != nil {
+		return icon
+	}
+	return buf.Bytes()
+}
+
 // linuxTrayIcon is the glyph for a desktop whose colour scheme preference
 // (the portal's org.freedesktop.appearance color-scheme) is light or not:
 // dark only where light is asked for; "no preference" or one that can't be

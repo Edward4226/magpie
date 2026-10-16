@@ -490,6 +490,10 @@ func Run(version string, showMain bool, link string) error {
 	h.tray.SetTooltip("magpie")
 	if icon, template := trayIconFor(runtime.GOOS, traySchemeLight()); template {
 		h.tray.SetTemplateIcon(icon)
+	} else if runtime.GOOS == "windows" {
+		// the app icon's clear border would leave the drawing about
+		// 13×13 in Windows' 16×16 tray slot (#2404)
+		h.tray.SetIcon(windowsTrayIcon(icon))
 	} else {
 		h.tray.SetIcon(icon)
 	}
