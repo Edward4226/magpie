@@ -1,7 +1,11 @@
 package library
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,12 +16,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/source"
+	"github.com/yetone/magpie/internal/steady"
 )
 
 // rtk's version is kept up to date the way it was installed: Homebrew's
@@ -365,7 +371,184 @@ func rtkUpgrader(bin string) []string {
 	// (D:\codes\tools\rtk): winget's records say so, not the folder's name
 	case have("winget") && wingetOwnsRTK(bin, real):
 		return wingetUp
+	// a standalone rtk.exe somewhere else on Windows, put there by hand
+	// from rtk's own Windows release (%USERPROFILE%\.local\bin, #2006): no
+	// package manager installed it, so magpie replaces it itself. winget's
+	// installs and ~/.cargo/bin's were taken above — wingetOwnsRTK is asked
+	// last so a winget-managed rtk is never stolen — and rtk's Windows
+	// release has no arm64 build, so on one magpie still can't tell
+	case rtkOnWindows && runtime.GOARCH == "amd64" &&
+		strings.EqualFold(filepath.Base(bin), "rtk.exe") &&
+		!strings.Contains(strings.ToLower(slash), "/winget/") &&
+		!strings.Contains(strings.ToLower(filepath.ToSlash(bin)), "/winget/") &&
+		dir != filepath.Join(home(), ".cargo", "bin") &&
+		!wingetOwnsRTK(bin, real):
+		return []string{rtkWindowsRelease, rtkLatestKnown(), bin}
 	}
+	return nil
+}
+
+// rtkWindowsRelease is the upgrader rtkUpgrader gives a Windows rtk no
+// package manager installed (#2006): magpie replaces it with rtk.exe out of
+// rtk's own Windows release. The action names the release to take and the
+// binary to replace.
+const rtkWindowsRelease = "rtk-windows-release"
+
+// rtkDownloadBase is where rtk's releases are downloaded from; a var so
+// tests can point it at a fake release.
+var rtkDownloadBase = "https://github.com/rtk-ai/rtk/releases/download"
+
+// rtkDownloadMax is the largest file magpie reads from a release: rtk's
+// Windows zip is a few MB.
+const rtkDownloadMax = 200 << 20
+
+// rtkLatestKnown is rtk's latest release as last read, "" when it was never
+// read: an upgrade action names it without asking GitHub, which ReadRTK (a
+// page draw) must not wait on.
+func rtkLatestKnown() string {
+	rtkLatest.Lock()
+	defer rtkLatest.Unlock()
+	return rtkLatest.v
+}
+
+// installRTKWindowsRelease replaces bin with rtk.exe out of rtk's Windows
+// release v version (#2006). The zip and the checksums.txt it is checked
+// against both come from rtk's own release (source.DoOfficial), so a
+// download that doesn't match is a real failure and nothing is replaced.
+func installRTKWindowsRelease(version, bin string) error {
+	const asset = "rtk-x86_64-pc-windows-msvc.zip"
+	base := rtkDownloadBase + "/v" + version + "/"
+	sums, err := rtkFetch(base + "checksums.txt")
+	if err != nil {
+		return fmt.Errorf("couldn't read RTK %s's checksums: %w", version, err)
+	}
+	want := rtkChecksum(string(sums), asset)
+	if want == "" {
+		return fmt.Errorf("RTK %s's checksums don't list %s", version, asset)
+	}
+	z, err := rtkFetch(base + asset)
+	if err != nil {
+		return fmt.Errorf("couldn't download RTK %s: %w", version, err)
+	}
+	if got := sha256.Sum256(z); hex.EncodeToString(got[:]) != want {
+		return fmt.Errorf("the RTK %s download doesn't match its checksum from rtk-ai/rtk; %s left as it was", version, filepath.Base(bin))
+	}
+	exe, err := rtkExeFromZip(z)
+	if err != nil {
+		return fmt.Errorf("couldn't read %s from RTK %s: %w", asset, version, err)
+	}
+	return replaceRTKBinary(bin, exe)
+}
+
+// rtkFetch is a release file from its official address (source.DoOfficial:
+// the file's checksum must come from the same trusted place as the file).
+func rtkFetch(url string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "magpie")
+	c := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := source.DoOfficial(c, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, rtkDownloadMax+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > rtkDownloadMax {
+		return nil, fmt.Errorf("%s: too large", url)
+	}
+	return b, nil
+}
+
+// rtkChecksum is the SHA-256 checksums.txt gives for name, "" when it
+// doesn't name it. The lines are "sha256  name", as sha256sum writes them.
+func rtkChecksum(sums, name string) string {
+	for _, l := range strings.FieldsFunc(sums, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		if f := strings.Fields(l); len(f) == 2 && strings.TrimPrefix(f[1], "*") == name {
+			return strings.ToLower(f[0])
+		}
+	}
+	return ""
+}
+
+// rtkExeFromZip is rtk.exe out of rtk's Windows release zip. The member is
+// named rtk.exe; an exe it names otherwise (its name changed) stands in.
+func rtkExeFromZip(z []byte) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(z), int64(len(z)))
+	if err != nil {
+		return nil, err
+	}
+	var pick *zip.File
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Base(f.Name), "rtk.exe") {
+			pick = f
+			break
+		}
+		if pick == nil && strings.EqualFold(filepath.Ext(f.Name), ".exe") {
+			pick = f
+		}
+	}
+	if pick == nil {
+		return nil, errors.New("it has no rtk.exe")
+	}
+	rc, err := pick.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(io.LimitReader(rc, rtkDownloadMax))
+}
+
+// replaceRTKBinary puts b in bin's place, written beside it first and with
+// the old one moved aside rather than removed: on Windows an rtk.exe an
+// agent is running refuses to be replaced outright (steady.Rename waits it
+// out), and a replacement that fails puts the user's rtk back, so it is
+// never lost (#2006).
+func replaceRTKBinary(bin string, b []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(bin), "."+filepath.Base(bin)+".*")
+	if err != nil {
+		return fmt.Errorf("couldn't write the new rtk beside %s: %w", bin, err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("couldn't write the new rtk beside %s: %w", bin, err)
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("couldn't write the new rtk beside %s: %w", bin, err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("couldn't write the new rtk beside %s: %w", bin, err)
+	}
+	// the old binary renamed, not removed: a rename that fails leaves it
+	aside := bin + ".old-" + strconv.Itoa(os.Getpid())
+	os.Remove(aside)
+	if err := steady.Rename(bin, aside); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("couldn't move the rtk at %s aside to replace it: %w", bin, err)
+	}
+	if err := steady.Rename(tmpName, bin); err != nil {
+		os.Remove(tmpName)
+		if rerr := steady.Rename(aside, bin); rerr != nil {
+			return fmt.Errorf("couldn't put the new rtk in %s (%v), and couldn't put the old one back from %s: %w", bin, err, aside, rerr)
+		}
+		return fmt.Errorf("couldn't put the new rtk in %s: %w", bin, err)
+	}
+	os.Remove(aside)
 	return nil
 }
 
@@ -457,26 +640,42 @@ func UpgradeRTK() (*RTKView, error) {
 		return nil, fmt.Errorf("magpie can't tell how the rtk at %s was installed — update it the way you installed it", bin)
 	}
 	before := rtkVersion()
-	var env []string
-	if c[0] == "sh" {
-		env = []string{"RTK_INSTALL_DIR=" + c[3]}
-		c = c[:3]
-	}
-	timeout := 10 * time.Minute
-	if c[0] == "cargo" {
-		timeout = 30 * time.Minute // it builds rtk
-	}
-	// brew upgrade updates Homebrew first, for its newest rtk
-	// winget having no newer rtk than this one yet is no failure
 	none := false
-	if _, err := runRTKInstaller(c, timeout, rtkAdminFolder(c, bin), env...); err != nil {
-		var ie *installError
-		if none = errors.As(err, &ie) && c[0] == "winget" && uint32(ie.code) == wingetNoUpgrade; !none {
+	if c[0] == rtkWindowsRelease {
+		// no package manager and no installer to run: magpie downloads
+		// rtk's own Windows release and replaces the binary itself (#2006)
+		version := RTKLatest()
+		if version == "" {
+			version = c[1] // what the action named, when GitHub can't be asked
+		}
+		if version == "" {
+			return nil, fmt.Errorf("magpie can't tell which RTK release to install for %s — check the network and try again", bin)
+		}
+		if err := installRTKWindowsRelease(version, bin); err != nil {
 			return nil, err
+		}
+	} else {
+		var env []string
+		if c[0] == "sh" {
+			env = []string{"RTK_INSTALL_DIR=" + c[3]}
+			c = c[:3]
+		}
+		timeout := 10 * time.Minute
+		if c[0] == "cargo" {
+			timeout = 30 * time.Minute // it builds rtk
+		}
+		// brew upgrade updates Homebrew first, for its newest rtk
+		// winget having no newer rtk than this one yet is no failure
+		if _, err := runRTKInstaller(c, timeout, rtkAdminFolder(c, bin), env...); err != nil {
+			var ie *installError
+			if none = errors.As(err, &ie) && c[0] == "winget" && uint32(ie.code) == wingetNoUpgrade; !none {
+				return nil, err
+			}
 		}
 	}
 	v := ReadRTK()
-	// the package manager just installed the newest it has
+	// an upgrade through a package manager leaves it with the newest it
+	// has; the release path above has no package manager to record for
 	rtkChannelHas(c, v.Version)
 	v.CheckLatest()
 	if v.Latest != "" && newer(v.Latest, v.Version) {
