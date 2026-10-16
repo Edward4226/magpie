@@ -73,6 +73,11 @@ func TestModelCompactsSetFromTheEditor(t *testing.T) {
 	if err := SetModelCompacts("deepseek", map[string]int{"typo": 5}); err == nil {
 		t.Error("a model deepseek doesn't serve was accepted")
 	}
+	// a bare 400 reads as 400 tokens though the user meant 400K (#2487):
+	// refused, so they are told the unit, and nothing is written
+	if err := SetModelCompacts("deepseek", map[string]int{"*": 400}); err == nil {
+		t.Error("a 400-token compaction threshold was accepted, though it means 400K (#2487)")
+	}
 	if got := settings.Load().ModelCompacts; !maps.Equal(got, want) {
 		t.Errorf("a refused save changed them: %v", got)
 	}
@@ -105,6 +110,11 @@ func TestSetCompactAt(t *testing.T) {
 	}
 	if err := SetCompactAt(-1); err == nil {
 		t.Error("a negative size was accepted")
+	}
+	// a bare 400 reads as 400 tokens though the user meant 400K (#2487):
+	// refused with the unit said, rather than compacting every turn
+	if err := SetCompactAt(400); err == nil {
+		t.Error("a 400-token compaction threshold was accepted, though it means 400K (#2487)")
 	}
 	if s := (settings.Settings{CompactAt: 500000, FullContext: true}); s.Compact() != 0 || s.Working(1000000) != 1000000 {
 		t.Errorf("full window: %d", s.Compact())

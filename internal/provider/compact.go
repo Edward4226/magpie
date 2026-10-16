@@ -173,8 +173,8 @@ func SetModelCompacts(providerID string, cs map[string]int) error {
 		return err
 	}
 	for model, n := range cs {
-		if n < 0 {
-			return errorf("a compaction threshold is a number of tokens, not %d", n)
+		if n < 0 || (n > 0 && n < settings.CompactFloor) {
+			return errorf("a compaction threshold is at least %d tokens, not %d (a bare 400 is 400 tokens; 400k is 400K)", settings.CompactFloor, n)
 		}
 		if err := settings.CheckModelKey("a compaction threshold", p.ID+"/"+model); err != nil {
 			return err
@@ -215,8 +215,8 @@ func SetModelCompacts(providerID string, cs map[string]int) error {
 // n tokens, Full window turned off; 0 is the working window again
 // (settings.WorkingWindow).
 func SetCompactAt(n int) error {
-	if n < 0 {
-		return errorf("a compaction threshold is a number of tokens, not %d", n)
+	if n < 0 || (n > 0 && n < settings.CompactFloor) {
+		return errorf("a compaction threshold is at least %d tokens, not %d (a bare 400 is 400 tokens; 400k is 400K)", settings.CompactFloor, n)
 	}
 	s := settings.Load()
 	if n == settings.WorkingWindow {

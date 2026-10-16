@@ -897,6 +897,16 @@ func CarryPerModel(in, cur *Settings) {
 // models that can take more.
 const WorkingWindow = 272000
 
+// CompactFloor is the smallest a compaction threshold may be, in tokens.
+// The threshold is typed in k (the box beside it says 272k / 500k), so a
+// user reading that and typing 400 means 400K, but 400 is read as 400
+// tokens and every turn then compacts (#2487). A threshold under this is
+// read as not set, and refused when set (provider.SetCompactAt,
+// provider.SetModelCompacts). It is far below any real threshold — the
+// smallest real ones are in the tens of thousands — so a value under it is
+// the unit being misread, never a window a user meant.
+const CompactFloor = 1000
+
 // Working is the context window an agent is told for a model with one of
 // n tokens (see FullContext).
 func (s Settings) Working(n int) int {
@@ -1424,6 +1434,33 @@ func (s Settings) normal() Settings {
 		s.CodexWarmAtOf = of
 		if len(of) == 0 {
 			s.CodexWarmAtOf = nil
+		}
+	}
+	// a compaction threshold typed as a bare number below CompactFloor
+	// means K to the user but reads as tokens, and every turn then compacts
+	// (#2487): it is read as not set here, at the one point Load and Save
+	// both pass through, so a file already written with one is read as
+	// unset and the next save doesn't write it back. The file itself is
+	// left alone; this is what reads it.
+	if s.CompactAt > 0 && s.CompactAt < CompactFloor {
+		s.CompactAt = 0
+	}
+	// s is a copy (a value receiver), but ModelCompacts is a map the copy
+	// shares with its caller, so an entry is not deleted from it: the map
+	// is rebuilt, and only when one is below the floor, which is also what
+	// keeps a plain save from allocating.
+	if len(s.ModelCompacts) > 0 {
+		kept := make(map[string]int, len(s.ModelCompacts))
+		cut := false
+		for model, n := range s.ModelCompacts {
+			if n > 0 && n < CompactFloor {
+				cut = true
+				continue
+			}
+			kept[model] = n
+		}
+		if cut {
+			s.ModelCompacts = kept
 		}
 	}
 	return s
