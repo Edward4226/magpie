@@ -422,6 +422,16 @@ body.side-nav.mac :is(#view-library .lib-head, #view-plugins .pm-head, #view-set
 body.side-nav :is(#view-library .lib-head, #view-plugins .pm-head, #view-settings .set-head) > * { pointer-events: auto; --wails-draggable: no-drag; min-width: 0; }
 body.side-nav :is(#view-library .lib-head, #view-plugins .pm-head)::before { display: none; }
 body.side-nav :is(#view-library .lib-headacts) { flex-wrap: nowrap; }
+/* beside the sidebar the title bar holds where the reader is and the page's
+   own tools in the room between it and the window's buttons (app.js measures
+   both, --tools-l/-r/-w). The tools are what that room is measured for: the
+   crumb is the one that gives way, held off them by their width, so a narrow
+   window ellipsizes the name rather than running the tools back over it
+   (#2625) */
+body.side-nav .crumb { margin-right: calc(var(--tools-w, 0px) + 16px); }
+body.side-nav #view-library .lib-headacts > :is(.lib-discover, .lib-more, .lib-backups) { flex: none; }
+/* room for the icons but not their labels: they say it with their tooltip */
+body.side-nav #view-library .lib-headacts.mini > :is(.lib-discover, .lib-more, .lib-backups) > span:not(.lib-mini) { display: none; }
 body.side-nav :is(#view-library, #view-plugins, #view-settings) { padding-top: 8px; }
 /* the gateway, under Settings: where it listens; a click opens its page */
 .side-gw { display: flex; align-items: center; gap: 8px; height: 26px; margin-top: 2px; padding: 0 9px; border-radius: 6px; font-size: 11.5px; color: var(--muted); text-align: left; white-space: nowrap; }

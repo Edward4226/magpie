@@ -23217,7 +23217,7 @@ if (mode === "window") {
   // the page's strip drawn again (a count, another language, a tab picked
   // there or by a link) is drawn again in the sidebar, once a frame
   let queued = false;
-  const again = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; navSubs(); }); };
+  const again = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; navSubs(); tools(); }); };
   const mo = new MutationObserver(again);
   for (const v of Object.keys(NAV_SUBS)) mo.observe($("#view-" + v), { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
   // a page whose head is only its tools (Library, Plugins, Settings) has them
@@ -23234,6 +23234,20 @@ if (mode === "window") {
       const st = document.documentElement.style;
       const set = (k, v) => { if (st.getPropertyValue(k) !== v) st.setProperty(k, v); };
       set("--top-h", top.offsetHeight + "px");
+      // the page's own tools are what the room beside the crumb is measured
+      // for (app.css). Where the reader is keeps a floor's worth; the tools
+      // take the rest, and if that is less than their labels need they come
+      // back as their icons rather than running over the crumb (#2625)
+      const acts = $("#view-library .lib-head .lib-headacts");
+      const kids = acts && acts.getClientRects().length ? [...acts.children].filter((e) => e.getClientRects().length) : [];
+      const gap = kids.length > 1 ? parseFloat(getComputedStyle(acts).columnGap) || 0 : 0;
+      const sum = (f) => kids.reduce((n, e) => n + f(e), 0) + (kids.length - 1) * gap;
+      if (acts && !acts.classList.contains("mini")) acts.dataset.wide = sum((e) => e.getBoundingClientRect().width);
+      const full = Number(acts?.dataset.wide) || sum((e) => e.getBoundingClientRect().width);
+      const icon = sum((e) => e.getBoundingClientRect().width - (e.querySelector("span:not(.lib-mini)")?.getBoundingClientRect().width || 0));
+      const room = a.left - 24 - (c.left + 96);
+      if (acts) acts.classList.toggle("mini", room < full);
+      set("--tools-w", (room >= full ? full : Math.max(0, Math.min(icon, room))) + "px");
       set("--tools-l", Math.ceil(c.right + 16) + "px");
       set("--tools-r", Math.ceil(innerWidth - a.left + 8) + "px");
     });
