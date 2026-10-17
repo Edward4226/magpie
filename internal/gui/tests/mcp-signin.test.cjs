@@ -22,6 +22,9 @@ const base = () => ({
     { name: "neon", transport: "http", url: "https://mcp.neon.tech/mcp", agents: ["codex", "claude"], signIn: { signedIn: false } },
     { name: "exa", transport: "http", url: "https://mcp.exa.ai/mcp", agents: ["codex"], signIn: { signedIn: false } },
     { name: "figma", transport: "http", url: "https://mcp.figma.com/mcp", agents: ["claude"], signIn: { signedIn: false } },
+    // #1706: saved while not signed in, so its first check says a sign-in is
+    // needed; the check keeps saying so even after it is signed in
+    { name: "linear", transport: "http", url: "https://mcp.linear.app/mcp", agents: ["codex"], signIn: { signedIn: false } },
   ],
 });
 // mcpauth.ErrNoSignIn, as the API says it
@@ -70,6 +73,19 @@ function server(lang, calls) {
       lib.servers[1].signIn = { signedIn: false };
       return route.fulfill({ json: lib });
     }
+    // #1706: linear's check always asks for a sign-in, the verdict its
+    // first check gave before it was signed in; the others are left to the
+    // catch-all (an empty reply deletes their health)
+    if (url.pathname === "/api/library/mcp/check") {
+      const names = req.postDataJSON().names;
+      const servers = {};
+      for (const n of names) {
+        if (n !== "linear") continue;
+        const s = lib.servers.find((x) => x.name === n);
+        servers[n] = s.signIn.signedIn ? { state: "auth", code: 401, oauth: true, signIn: s.signIn } : { state: "auth", code: 401, oauth: true };
+      }
+      return route.fulfill({ json: { servers } });
+    }
     if (url.pathname === "/api/usage/quotas") return route.fulfill({ json: [] });
     if (url.pathname === "/api/groups") return route.fulfill({ json: { groups: [] } });
     if (url.pathname === "/api/providers") return route.fulfill({ json: { providers: [], gateway: { running: true } } });
@@ -81,8 +97,8 @@ function server(lang, calls) {
 }
 
 const words = {
-  en: { signIn: "Sign in", signOut: "Sign out", signed: "Signed in", label: "Sign-in", done: "Signed in to neon — the agents given it use magpie's sign-in", out: "Signed out of neon — the agents are given the server's own address again", exaDone: "Signed in to exa — the agents given it use magpie's sign-in", noSignIn: "already works without signing in", refused: "admits only the apps it lists", saveSignIn: "Save and sign in" },
-  zh: { signIn: "登录", signOut: "退出登录", signed: "已登录", label: "登录", done: "已登录 neon，分配到它的 agent 共用 magpie 的登录", out: "已退出 neon，agent 改回使用服务器自身的地址", exaDone: "已登录 exa，分配到它的 agent 共用 magpie 的登录", noSignIn: "无需登录即可使用", refused: "只接受它列出的应用", saveSignIn: "保存并登录" },
+  en: { signIn: "Sign in", signOut: "Sign out", signed: "Signed in", needs: "needs sign-in", label: "Sign-in", done: "Signed in to neon — the agents given it use magpie's sign-in", out: "Signed out of neon — the agents are given the server's own address again", exaDone: "Signed in to exa — the agents given it use magpie's sign-in", noSignIn: "already works without signing in", refused: "admits only the apps it lists", saveSignIn: "Save and sign in" },
+  zh: { signIn: "登录", signOut: "退出登录", signed: "已登录", needs: "需要登录", label: "登录", done: "已登录 neon，分配到它的 agent 共用 magpie 的登录", out: "已退出 neon，agent 改回使用服务器自身的地址", exaDone: "已登录 exa，分配到它的 agent 共用 magpie 的登录", noSignIn: "无需登录即可使用", refused: "只接受它列出的应用", saveSignIn: "保存并登录" },
 };
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -173,6 +189,43 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.keyboard.press("Escape");
         await page.locator("#modal .lib-editor").waitFor({ state: "detached" });
         assert.equal(await scrolled(), before, "no click moved the page");
+        await ctx.close();
+      });
+
+      // #1706 (liuweifeng): a server saved before it was signed in keeps the
+      // check it had then—"needs sign-in"—once it is signed in. The row must
+      // say Signed in and nothing asking for a sign-in beside it; the stale
+      // check waits for a click.
+      await t.test(lang + " stale check", async () => {
+        const w = words[lang];
+        const calls = [];
+        const ctx = await browser.newContext({ viewport: { width: 980, height: 800 } });
+        await ctx.addInitScript(() => { try { localStorage.setItem("magpie.libTab", "mcp"); } catch {} });
+        const page = await ctx.newPage();
+        page.setDefaultTimeout(5000);
+        page.on("pageerror", (e) => errors.push(e.message));
+        await page.route("**/*", server(lang, calls));
+        await page.goto("http://magpie.test/");
+        await page.locator('button[data-view="library"]').click();
+        const row = (name) => page.locator("#view-library .lib-row", { has: page.locator(".name", { hasText: new RegExp("^" + name) }) });
+        const status = (name) => page.locator(`#view-library .lib-health[data-server="${name}"]`);
+        await row("linear").waitFor();
+        // saved while not signed in: its check says a sign-in is needed
+        await status("linear").locator("span", { hasText: w.needs }).waitFor();
+        // sign in from its row
+        await row("linear").click();
+        const box = page.locator("#modal .lib-signin");
+        await box.getByRole("button", { name: w.signIn, exact: true }).click();
+        await row("linear").locator(".lib-tag", { hasText: w.signed }).waitFor();
+        await page.keyboard.press("Escape");
+        await page.locator("#modal .lib-editor").waitFor({ state: "detached" });
+        // the check from before the sign-in settles; it is not the row's word
+        await page.waitForFunction((name) => {
+          const b = document.querySelector(`#view-library .lib-health[data-server="${name}"]`);
+          return b && !b.classList.contains("checking");
+        }, "linear");
+        assert.equal(await status("linear").locator("span", { hasText: w.needs }).count(), 0, "Signed in beside needs sign-in");
+        assert.deepEqual(await row("linear").locator(".name .lib-tag").allInnerTexts(), [w.signed]);
         await ctx.close();
       });
     }

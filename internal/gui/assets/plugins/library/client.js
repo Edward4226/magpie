@@ -1751,7 +1751,19 @@ magpie.plugin("library", (ctx) => {
         b.title = t("Connecting to it to list its tools");
         continue;
       }
-      const [text, tip] = healthWords(e.h, lib.servers.find((s) => s.name === b.dataset.server));
+      const s = lib.servers.find((x) => x.name === b.dataset.server);
+      // a check that still asks for a sign-in magpie is signed in to is the
+      // one from before it: the row's own tag says Signed in, and a second
+      // "needs sign-in" beside it is stale. Such a one waits for a click
+      // instead of painting the old verdict (#1706, liuweifeng)
+      if (e.h.state === "auth" && s?.signIn?.signedIn && !s.signIn.dead) {
+        b.hidden = false;
+        b.className = "lib-health idle";
+        b.replaceChildren(el("span", "", t("not checked")));
+        b.title = t("Click to check it");
+        continue;
+      }
+      const [text, tip] = healthWords(e.h, s);
       // a check magpie couldn't make for want of a variable only the
       // agent's own launch sets says nothing of the server, so it isn't
       // painted as broken (#2308, ASD-max: Codex's host-only codex_app,
