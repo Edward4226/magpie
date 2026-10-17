@@ -360,3 +360,26 @@ func TestMarketSkillHadByName(t *testing.T) {
 		}
 	}
 }
+
+// A skill from GitHub is had only from its own repository: another
+// repository's skill of the same name is a different one, and the market
+// must not mark it added (#1420).
+func TestMarketSkillHaveIsPerRepo(t *testing.T) {
+	l := &Library{Skills: []*Skill{
+		{Name: "archify", Source: &Source{Kind: "github", Repo: "tt-ai/archify", Path: "skills/archify"}},
+		{Name: "grill-me"},
+		{Name: "tdd", Source: &Source{Kind: "folder", Dir: "/home/u/.agents/skills/tdd"}},
+	}}
+	// another repository's archify isn't had; its own repository's is; one
+	// with no source, or a folder one, is had by name
+	for _, c := range []struct{ source, id, name, want string }{
+		{"rheinmir/archify", "archify", "archify", ""},
+		{"tt-ai/archify", "archify", "archify", "archify"},
+		{"anyone/skills", "grill-me", "Grill Me", "grill-me"},
+		{"mattpocock/skills", "tdd", "tdd", "tdd"},
+	} {
+		if got := l.haveSkill(c.source, c.id, c.name); got != c.want {
+			t.Errorf("haveSkill(%s, %s, %s) = %q, want %q", c.source, c.id, c.name, got, c.want)
+		}
+	}
+}
