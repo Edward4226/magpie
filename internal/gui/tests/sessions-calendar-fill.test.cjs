@@ -130,7 +130,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await shot("narrow");
         const m = await page.evaluate(measure);
         assert(!m.row, "the facts sit under the calendar");
-        assert(m.used > 0.9, `the calendar takes ${(100 * m.used).toFixed(0)}% of the card`);
+        // the ratio itself, not a rounded one: 89.96% reads as "90% of the
+        // card" and hides why it is short of the bar (#1314)
+        assert(m.used > 0.9, `the calendar takes ${m.used.toFixed(3)} of the card`);
         assert(m.past <= 1, `${m.past}px past the card`);
         assert.equal(m.days, N);
         assert(m.square);

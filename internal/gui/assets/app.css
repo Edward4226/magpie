@@ -1476,7 +1476,11 @@ details.cx-part[open] > summary .cx-h { margin-bottom: 2px; }
 .sess-cal-side b { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .sess-cal-side span { font-size: 10.5px; color: var(--muted); }
 .sess-cal-side small { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
-@container (max-width: 560px) { .sess-cal-wrap { flex-direction: column; gap: 10px; } .sess-cal-side { flex-direction: row; flex-wrap: wrap; gap: 16px; padding-top: 0; } }
+/* the facts go under the calendar here, so the calendar is that row's only
+   child the width is for: left to lay itself out it would take its own
+   content width, which is short of the card whenever a language's month and
+   weekday names are narrow — the width the bar is drawn across (#1314) */
+@container (max-width: 560px) { .sess-cal-wrap { flex-direction: column; gap: 10px; } .sess-cal { align-self: stretch; } .sess-cal-side { flex-direction: row; flex-wrap: wrap; gap: 16px; padding-top: 0; } }
 .sess-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
 .sess-grid[hidden] { display: none; }
 .sess-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 10px; min-width: 0; display: flex; flex-direction: column; }
