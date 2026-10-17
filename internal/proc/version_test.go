@@ -14,8 +14,8 @@ import (
 
 // A CLI is asked its version once per binary: one that fails to run (macOS
 // stopping it as malware, #864) isn't started again until it changes, one
-// cut off by the timeout is, and an npm CLI's is read from its package
-// without running it.
+// cut off by the timeout is kept like any other failure (#2693), and an npm
+// CLI's is read from its package without running it.
 func TestVersionRunsOnce(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts")
@@ -49,7 +49,8 @@ func TestVersionRunsOnce(t *testing.T) {
 		t.Fatalf("run %d times", n)
 	}
 
-	// a timeout is asked again
+	// a timeout is kept like any other failure: it isn't asked again until
+	// the binary changes (#2693)
 	other := filepath.Join(dir, "slow")
 	testenv.Program(t, other, "#!/bin/sh\n")
 	old := runVersion
@@ -58,8 +59,14 @@ func TestVersionRunsOnce(t *testing.T) {
 	runVersion = func(string) (string, error) { asked++; return "", context.DeadlineExceeded }
 	Version(other)
 	Version(other)
-	if asked != 2 {
+	if asked != 1 {
 		t.Fatalf("a timed-out CLI was asked %d times", asked)
+	}
+	// changed (reinstalled), a timed-out one is asked again too
+	os.Chtimes(other, time.Now().Add(time.Minute), time.Now().Add(time.Minute))
+	Version(other)
+	if asked != 2 {
+		t.Fatalf("a changed timed-out CLI was asked %d times", asked)
 	}
 
 	// an npm CLI: the package says it, nothing is run
@@ -101,6 +108,60 @@ func TestVersionReadsAnNpmShim(t *testing.T) {
 		if v := Version(bin); v != c.want || asked != 0 {
 			t.Fatalf("%s: %q, run %d times", c.name, v, asked)
 		}
+	}
+}
+
+// An Electron desktop app is never started to ask its version: given
+// --version it starts Chromium instead of printing anything (#2693).
+// OpenCode Desktop's version is read from the resources/opencode-cli.version
+// file beside its binary, the way the app reads it itself.
+func TestVersionNeverRunsAnElectronApp(t *testing.T) {
+	old := runVersion
+	t.Cleanup(func() { runVersion = old })
+	asked := 0
+	runVersion = func(string) (string, error) { asked++; return "", nil }
+
+	mkApp := func(t *testing.T, withVersionFile bool) (bin, marker string) {
+		// /opt/OpenCode/ai.opencode.desktop, reached through a symlink the
+		// way the reporter's /usr/local/bin/opencode reaches it (#2693)
+		app := filepath.Join(t.TempDir(), "OpenCode")
+		os.MkdirAll(filepath.Join(app, "resources"), 0o755)
+		marker = filepath.Join(app, "started")
+		real := filepath.Join(app, "ai.opencode.desktop")
+		testenv.Program(t, real, "#!/bin/sh\necho started >> '"+marker+"'\n")
+		for _, f := range []string{"chrome-sandbox", "resources.pak", filepath.Join("resources", "app.asar")} {
+			os.WriteFile(filepath.Join(app, f), []byte("marker"), 0o644)
+		}
+		os.WriteFile(filepath.Join(app, "resources", "opencode-cli"), []byte("#!/bin/sh\n"), 0o755)
+		if withVersionFile {
+			os.WriteFile(filepath.Join(app, "resources", "opencode-cli.version"), []byte("2.0.32\n"), 0o644)
+		}
+		bin = filepath.Join(app, "opencode")
+		if err := os.Symlink(real, bin); err != nil {
+			t.Fatal(err)
+		}
+		return bin, marker
+	}
+	ran := func(marker string) bool {
+		b, _ := os.ReadFile(marker)
+		return len(b) > 0
+	}
+
+	bin, marker := mkApp(t, true)
+	if v := Version(bin); v != "2.0.32" {
+		t.Fatalf("got %q, want %q", v, "2.0.32")
+	}
+	if asked != 0 || ran(marker) {
+		t.Fatalf("the desktop binary was started: runVersion called %d times, marker written=%v", asked, ran(marker))
+	}
+
+	// no version file beside it: unknown, still never started
+	bin, marker = mkApp(t, false)
+	if v := Version(bin); v != "" {
+		t.Fatalf("got %q, want unknown", v)
+	}
+	if asked != 0 || ran(marker) {
+		t.Fatalf("the desktop binary was started: runVersion called %d times, marker written=%v", asked, ran(marker))
 	}
 }
 

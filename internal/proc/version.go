@@ -3,7 +3,6 @@ package proc
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,11 +14,14 @@ import (
 // Version is what the CLI at bin says its version is: the version in the
 // package.json of the npm package it is a file of, read rather than run,
 // else what bin --version prints (stdout and stderr, ANSI and all), "" when
-// it says nothing. A run that fails other than by taking too long isn't
-// made again until the binary changes (#864): macOS stops a program XProtect flags with
-// a "contains malware" alert on each start, and a CLI asked its version
-// every few minutes put one up every time magpie's window opened. An npm
-// CLI isn't run at all: its package says the version its --version would.
+// it says nothing. A run that says nothing, or takes too long, isn't made
+// again until the binary changes (#864, #2693): macOS stops a program
+// XProtect flags with a "contains malware" alert on each start, and a CLI
+// asked its version every few minutes put one up every time magpie's window
+// opened. An npm CLI isn't run at all: its package says the version its
+// --version would. An Electron desktop app is never run at all either:
+// given --version it starts Chromium instead of printing anything, hanging
+// until the timeout and holding its single-instance lock (#2693).
 func Version(bin string) string {
 	real, err := RealPath(bin)
 	if err != nil {
@@ -35,6 +37,9 @@ func Version(bin string) string {
 	if v := shimVersion(real); v != "" {
 		return v
 	}
+	if isElectronApp(real) {
+		return electronAppVersion(real)
+	}
 	stamp := fmt.Sprint(real, st.Size(), st.ModTime().UnixNano())
 	versionsFailed.Lock()
 	failed := versionsFailed.m[bin] == stamp
@@ -42,12 +47,12 @@ func Version(bin string) string {
 	if failed {
 		return ""
 	}
-	out, err := runVersion(bin)
-	// a run cut off by the timeout (a busy machine, a slow first start) is
-	// made again; one that ran and said nothing, or couldn't start, is not.
-	// One that answered is asked again as its caller likes: what it says
-	// may come from a file beside it that an update changes.
-	if out == "" && !errors.Is(err, context.DeadlineExceeded) {
+	out, _ := runVersion(bin)
+	// a run that said nothing, or was cut off by the timeout, isn't made
+	// again until the binary changes: what it says may come from a file
+	// beside it that an update changes, but a run that answered is asked
+	// again as its caller likes.
+	if out == "" {
 		versionsFailed.Lock()
 		versionsFailed.m[bin] = stamp
 		versionsFailed.Unlock()
@@ -141,4 +146,35 @@ func shimVersion(real string) string {
 		return ""
 	}
 	return p.Version
+}
+
+// isElectronApp reports whether the binary at real belongs to an Electron
+// desktop app: electron-builder leaves chrome-sandbox, resources.pak or
+// resources/app.asar beside it. Such a binary must never be started to ask
+// its version: given --version it starts Chromium instead of printing
+// anything, hanging until it is killed and holding its single-instance
+// lock, which breaks a window the user opens themselves (#2693).
+func isElectronApp(real string) bool {
+	dir := filepath.Dir(real)
+	for _, marker := range []string{"chrome-sandbox", "resources.pak", filepath.Join("resources", "app.asar")} {
+		st, err := os.Stat(filepath.Join(dir, marker))
+		if err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// electronAppVersion is the version of the Electron desktop app at real,
+// read from beside it rather than by running it: OpenCode Desktop writes
+// its bundled CLI's version to resources/opencode-cli.version and reads it
+// the same way itself (#2693). "" when it can't be told; a failed read
+// means unknown, never "no version". Other Electron apps have no such
+// file, so this changes nothing for them.
+func electronAppVersion(real string) string {
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(real), "resources", "opencode-cli.version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
