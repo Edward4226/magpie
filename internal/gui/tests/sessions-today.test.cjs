@@ -81,11 +81,27 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const last = bars.last();
       const title = () => last.getAttribute("title");
       const w = want[lang];
+      // The page reads /api/sessions/stats more than once while opening:
+      // reads.n counts a read when its request arrives, while the title is
+      // drawn when that read's answer lands, so a count and a title taken
+      // together can be one read apart — a title still showing the read
+      // before the count, or the read after a count taken too early. Wait
+      // until today's bar's title is the latest read's number and no further
+      // read has arrived, then hand that title back, so an assertion compares
+      // a title with the read it belongs to.
+      const titleAtLatestRead = async () => {
+        for (;;) {
+          const n = reads.n;
+          const tt = await title();
+          if (reads.n === n && tt !== null && tt.includes(w.tokens(n))) return tt;
+          await page.waitForTimeout(10);
+        }
+      };
 
       await t.test("today is the last bar, its usage in its title", async () => {
+        const tt = await titleAtLatestRead();
         const n = reads.n;
         assert(n >= 1);
-        const tt = await title();
         assert(tt.startsWith(w.day + " · "), tt);
         assert(tt.includes(w.tokens(n)), tt);
       });
@@ -98,7 +114,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.clock.runFor(16000);
         await page.waitForFunction((b) => document.querySelector("#sessChart .bars > .bar:last-child")?.title !== b, before);
         assert(reads.n > was, "the sessions were not read again");
-        const now = await title();
+        const now = await titleAtLatestRead();
         assert(now.includes(w.tokens(reads.n)), now);
         assert.equal(await page.evaluate(() => window.__today.isConnected), true, "today's bar was drawn anew under the pointer");
         assert.equal(await page.evaluate(() => window.__today.matches(":hover")), true);
