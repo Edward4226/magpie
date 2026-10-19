@@ -1742,6 +1742,42 @@ func foundSkills(l *Library) []FoundSkill {
 	// a skill in several agents is compared with the first found, which
 	// is walked once
 	seen := walked{}
+	// add is one found skill: by name, entered at p, whose folder really
+	// is r and whose SKILL.md says m. A skill found at the root and one
+	// under a category merge by these same rules.
+	add := func(pl place, name, p string, m meta, r string) {
+		f := byName[name]
+		switch {
+		case f == nil:
+			f = &FoundSkill{Name: name, Description: m.Description, Agents: []string{}, real: r, at: p}
+			switch {
+			case pl.lib:
+				f.Library = p
+			case pl.agent == "":
+				f.Shared = p
+			default:
+				f.Agents = append(f.Agents, pl.agent)
+			}
+			if linked(p) {
+				f.Link = r
+			}
+			byName[name] = f
+			out = append(out, f)
+		case f.real == r:
+			if pl.agent == "" {
+				f.Shared = p
+			} else if !slices.Contains(f.Agents, pl.agent) {
+				f.Agents = append(f.Agents, pl.agent)
+			}
+		case pl.agent == "":
+			// another by that name in the shared folder than the one in
+			// the library's: no agent's, and left as it is
+		case sameTreeIn(seen, p, f.at):
+			f.Copies = append(f.Copies, pl.agent)
+		default:
+			f.Others = append(f.Others, pl.agent)
+		}
+	}
 	for _, pl := range places {
 		es, _ := os.ReadDir(pl.dir)
 		for _, e := range es {
@@ -1755,39 +1791,30 @@ func foundSkills(l *Library) []FoundSkill {
 			}
 			m, ok := readMeta(p)
 			if !ok {
+				// Hermes keeps its skills in category folders
+				// (~/.hermes/skills/<category>/<skill>/SKILL.md) that hold
+				// no SKILL.md of their own (#2904): walk one level below
+				// its own skills root, and nowhere else. A category with a
+				// SKILL.md is the skill itself and its children are not
+				// walked.
+				if pl.agent == "hermes" {
+					cs, _ := os.ReadDir(p)
+					for _, c := range cs {
+						cname := c.Name()
+						cp := filepath.Join(p, cname)
+						if strings.HasPrefix(cname, ".") || !nameRe.MatchString(cname) {
+							continue
+						}
+						cm, ok := readMeta(cp)
+						if !ok {
+							continue
+						}
+						add(pl, cname, cp, cm, realDir(cp))
+					}
+				}
 				continue
 			}
-			r := realDir(p)
-			switch {
-			case f == nil:
-				f = &FoundSkill{Name: name, Description: m.Description, Agents: []string{}, real: r, at: p}
-				switch {
-				case pl.lib:
-					f.Library = p
-				case pl.agent == "":
-					f.Shared = p
-				default:
-					f.Agents = append(f.Agents, pl.agent)
-				}
-				if linked(p) {
-					f.Link = r
-				}
-				byName[name] = f
-				out = append(out, f)
-			case f.real == r:
-				if pl.agent == "" {
-					f.Shared = p
-				} else if !slices.Contains(f.Agents, pl.agent) {
-					f.Agents = append(f.Agents, pl.agent)
-				}
-			case pl.agent == "":
-				// another by that name in the shared folder than the one in
-				// the library's: no agent's, and left as it is
-			case sameTreeIn(seen, p, f.at):
-				f.Copies = append(f.Copies, pl.agent)
-			default:
-				f.Others = append(f.Others, pl.agent)
-			}
+			add(pl, name, p, m, realDir(p))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

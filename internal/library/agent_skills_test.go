@@ -85,6 +85,66 @@ func TestAgentsSkillsFolders(t *testing.T) {
 	}
 }
 
+// Hermes keeps its skills in category folders, its official layout
+// ~/.hermes/skills/<category>/<skill>/SKILL.md, and its own loader reads
+// them there. The library finds them too: one level below its skills root
+// only, by the skill folder's name and its own SKILL.md, while a skill
+// directly under the root and a category with no SKILL.md of its own stay
+// as they were (#2904).
+func TestFoundSkillsHermesCategories(t *testing.T) {
+	h := sandbox(t)
+	// as TestAgentsSkillsFolders: Hermes's own folder is %LOCALAPPDATA%
+	// \hermes on Windows, so its root is asked of appdir, not spelled out
+	hermes, err := filepath.Rel(h, appdir.HermesHome())
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(h, hermes, "config.yaml"), "")
+	holdCLI(t, h, "hermes")
+	root := filepath.Join(appdir.HermesHome(), "skills")
+	skill(t, filepath.Join(root, "tavily-search"), "tavily-search", "Search the web")
+	skill(t, filepath.Join(root, "autonomous-ai-agents", "hermes-agent"), "hermes-agent", "Hermes itself")
+	skill(t, filepath.Join(root, "software-development", "systematic-debugging"), "systematic-debugging", "Debug it")
+	// a category with no skill under it, and one with no SKILL.md
+	if err := os.MkdirAll(filepath.Join(root, "empty-category"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := Read(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]FoundSkill{}
+	for _, f := range v.FoundSkills {
+		found[f.Name] = f
+	}
+	for _, name := range []string{"tavily-search", "hermes-agent", "systematic-debugging"} {
+		f, ok := found[name]
+		if !ok {
+			t.Fatalf("%s not found: %+v", name, v.FoundSkills)
+		}
+		if !slices.Contains(f.Agents, "hermes") {
+			t.Errorf("%s: agents %v", name, f.Agents)
+		}
+	}
+	if _, ok := found["empty-category"]; ok {
+		t.Errorf("a category with no skill was found: %+v", found["empty-category"])
+	}
+	// the description is the skill's own, not the category's
+	if got := found["hermes-agent"].Description; got != "Hermes itself" {
+		t.Errorf("hermes-agent description: %q", got)
+	}
+	if got := found["systematic-debugging"].Description; got != "Debug it" {
+		t.Errorf("systematic-debugging description: %q", got)
+	}
+	// and the real folder and entry are the skill's, which an import acts
+	// on, never the category
+	want := filepath.Join(root, "software-development", "systematic-debugging")
+	if f := found["systematic-debugging"]; f.real != want || f.at != want {
+		t.Errorf("systematic-debugging real %q at %q, want %q", f.real, f.at, want)
+	}
+}
+
 // A skill given to Kimi Code is one link in ~/.agents/skills, which Goose
 // shares; Codex and Gemini CLI, which read that folder as well, get no
 // second link in their own, and get one again once it's not there.
