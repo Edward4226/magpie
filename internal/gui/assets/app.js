@@ -17871,6 +17871,9 @@ function quotaWindows(sub) {
       const line = holdsLine(w.holds);
       // a past cycle's whole is reckoned at its own last reading (#2009)
       if (sub.history) line.title = t("Estimated from the window that began {start}, read {at}", { start: quotaCycleDate(Date.parse(w.holds.since)), at: quotaCycleDate(w.recordedAt) }) + "\n" + line.title;
+      // a balance on the card can pay for a call the window didn't cover,
+      // so the whole may read high (#2333)
+      if (sub.balance) line.title += "\n" + t("Balance") + " " + sub.balance + ": " + holdsWhy.credits();
       r.append(line);
     } else if (w.holdsWhy && holdsWhy[w.holdsWhy]) {
       // and where it can't be told, so, and why in its tooltip (#2045)

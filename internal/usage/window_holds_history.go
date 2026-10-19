@@ -43,8 +43,10 @@ func HistoricalWindowHolds(cards []provider.SubscriptionQuota, hist []provider.Q
 					w.Used, w.ResetsAt, w.ResetSecs, w.Holds, w.HoldsWhy, w.StartsAt = 100-last.Left, last.ResetsAt, 0, nil, "", nil
 					// Use the recorded bounds, including windows whose span changed.
 					w.Span = last.ResetsAt.Sub(*last.Start)
-					// Balance stays: a card that tells one is never reckoned,
-					// now or for a past cycle.
+					// Balance stays on the snapshot, but it no longer vetoes
+					// the estimate by itself: a window is left out only
+					// where a call in it may have been paid from credits
+					// (a dry run), now or for a past cycle.
 					snapshots = append(snapshots, provider.SubscriptionQuota{Provider: q.Provider, User: q.User, Balance: q.Balance, ReadAt: &last.At, Windows: []provider.QuotaWindow{w}})
 				}
 			}

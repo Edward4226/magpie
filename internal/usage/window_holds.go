@@ -63,11 +63,14 @@ func readAtOf(q provider.SubscriptionQuota, now time.Time) time.Time {
 // holdsBounds is the window of q's account to reckon w's whole over, where
 // w can be: an account's own card, a window that runs out and starts again
 // on a known clock, counts a whole account's or some named models' calls,
-// and is used enough, and a reading not past its reset. why is empty where
-// it can be, else the provider.Holds* reason it can't, or "-" for a window
-// whose whole is never told (no reason worth a line on the card).
+// and is used enough, and a reading not past its reset. A Balance on the
+// card does not veto it on its own (#2333): whether the window's calls may
+// have been paid from credits is asked window by window, from a dry run
+// (dryRuns, provider.HoldsCredits). why is empty where it can be, else the
+// provider.Holds* reason it can't, or "-" for a window whose whole is never
+// told (no reason worth a line on the card).
 func holdsBounds(q provider.SubscriptionQuota, w provider.QuotaWindow, at time.Time) (start, end time.Time, why string) {
-	if q.Error != "" || q.From != "" || q.User == "" || q.Balance != "" {
+	if q.Error != "" || q.From != "" || q.User == "" {
 		return time.Time{}, time.Time{}, "-"
 	}
 	if w.Unlimited || w.Aside || w.Family != "" || w.Pool != "" || math.IsNaN(w.Used) {

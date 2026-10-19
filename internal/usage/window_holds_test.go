@@ -175,6 +175,31 @@ func TestWindowHoldsNeedsTheWholeWindowLogged(t *testing.T) {
 	}
 }
 
+// #2333: a Codex account with credits is no longer passed over by the
+// balance alone. A window whose calls the window paid for is reckoned as
+// any other, and only a window the account didn't pay for (a dry run) is
+// left out; a window too little used still says why.
+func TestWindowHoldsWithBalanceButNoCreditsCall(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	fiveReset, weekReset := now.Add(2*time.Hour), now.Add(4*24*time.Hour)
+	qs := []provider.SubscriptionQuota{{Provider: "codex", User: "sample@example.com", Balance: "12 credits", Windows: []provider.QuotaWindow{
+		{Name: "5 hours", Used: 20, ResetsAt: &fiveReset, Span: 5 * time.Hour},
+		{Name: "7 days", Used: 4, ResetsAt: &weekReset, Span: 7 * 24 * time.Hour},
+	}}}
+	recs := []Record{{Time: now.Add(-time.Hour), Provider: "codex", ProviderAccount: "sample@example.com", Model: "gpt-5.5", Input: 100, Status: 200}}
+	got := windowHolds(qs, now, now.Add(-30*24*time.Hour), func(Record) *catalog.Price { return nil }, nil, dryRuns(qs, nil, now), func(fn func(Record)) {
+		for _, r := range recs {
+			fn(r)
+		}
+	})
+	if w := got[0].Windows[0]; w.Holds == nil || w.Holds.Tokens != 500 || w.HoldsWhy != "" {
+		t.Fatalf("a balance, and a 5 hours the window paid for: %+v (%q), want 500 tokens and no reason", w.Holds, w.HoldsWhy)
+	}
+	if w := got[0].Windows[1]; w.Holds != nil || w.HoldsWhy != provider.HoldsLow {
+		t.Fatalf("a balance, 4%% used: %+v (%q), want none, why %q", w.Holds, w.HoldsWhy, provider.HoldsLow)
+	}
+}
+
 // A month's window began on the same day a month before its reset, not 30
 // days before: Kiro's credits reset on the 1st.
 func TestWindowBoundsOfAMonth(t *testing.T) {
@@ -186,18 +211,18 @@ func TestWindowBoundsOfAMonth(t *testing.T) {
 	}
 }
 
-// #2010 (NorethSea): once a Codex account's window read none left, the
-// calls ChatGPT still answered were paid from credits, and with the
-// credits since spent the card has no Balance to set it aside. A window
-// with such a call in it isn't reckoned: not the 5 hours that ran dry,
-// nor the week the same calls fell in. Calls in a dry run that the vendor
-// turned away leave it reckoned, and so does a run before the window began.
+// #2010 (NorethSea), #2333: once a Codex account's window read none left,
+// the calls ChatGPT still answered were paid from credits. A balance on the
+// card no longer sets such calls aside by itself; only a window whose calls
+// fall outside a dry run is reckoned. So not the 5 hours that ran dry, nor
+// the week the same calls fell in. Calls in a dry run that the vendor turned
+// away leave it reckoned, and so does a run before the window began.
 func TestWindowHoldsLeavesOutCallsPaidOtherwise(t *testing.T) {
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	readAt := now.Add(-time.Minute)
 	at := func(d time.Duration) *time.Time { x := now.Add(d); return &x }
 	card := func(fiveUsed float64, fiveReset time.Duration) []provider.SubscriptionQuota {
-		return []provider.SubscriptionQuota{{Provider: "codex", User: "sample@example.com", ReadAt: &readAt, Windows: []provider.QuotaWindow{
+		return []provider.SubscriptionQuota{{Provider: "codex", User: "sample@example.com", Balance: "12 credits", ReadAt: &readAt, Windows: []provider.QuotaWindow{
 			{Name: "5 hours", Used: fiveUsed, ResetsAt: at(fiveReset), Span: 5 * time.Hour},
 			{Name: "7 days", Used: 50, ResetsAt: at(3 * 24 * time.Hour), Span: 7 * 24 * time.Hour},
 		}}}

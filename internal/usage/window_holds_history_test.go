@@ -56,12 +56,17 @@ func TestHistoricalWindowHoldsUsesEachWindowsOwnReading(t *testing.T) {
 	if got := HistoricalWindowHolds(cards, hist, to, now.Add(-time.Hour)); len(got) != 0 {
 		t.Fatalf("missing old readings: %+v", got)
 	}
-	// A card that tells a balance may have paid from it, so a past cycle
-	// is no more reckoned than the live one.
+	// A card that tells a balance no longer passes its cycles over by
+	// itself (#2333): with no call the window may not have paid for, a past
+	// cycle is reckoned as the live one is.
 	paid := []provider.SubscriptionQuota{{Provider: "codex", User: user, Balance: "12 credits", Windows: cards[0].Windows}}
-	for _, s := range HistoricalWindowHolds(paid, hist, from, to) {
-		if w := s.Windows[0]; w.Holds != nil || w.HoldsWhy != "" {
-			t.Errorf("%s with a balance: %+v (%q)", w.Name, w.Holds, w.HoldsWhy)
+	gotPaid := HistoricalWindowHolds(paid, hist, from, to)
+	if len(gotPaid) != 2 {
+		t.Fatalf("historical windows with a balance: %+v", gotPaid)
+	}
+	for i, want := range []int64{11000, 2750} {
+		if h := gotPaid[i].Windows[0].Holds; h == nil || h.Tokens != want {
+			t.Errorf("%s with a balance: %+v (%q), want %d tokens", gotPaid[i].Windows[0].Name, h, gotPaid[i].Windows[0].HoldsWhy, want)
 		}
 	}
 }
