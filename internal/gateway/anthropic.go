@@ -296,7 +296,9 @@ func anthropicReplaysThinking(host, model string) bool {
 // one holding noReasoning, and turns a redacted_thinking block (Claude's, sealed, which
 // DeepSeek can't read) into that too, or leaves it out when the message
 // has thinking already, for anthropicReplaysThinking. A Claude Code routing
-// group that falls from Claude to DeepSeek sends both (#1611). Every other
+// group that falls from Claude to DeepSeek sends both (#1611). The block
+// it adds carries an empty signature, which OpenRouter's Anthropic endpoint
+// requires (400 without it, #2883) and DeepSeek takes. Every other
 // message, and a body with nothing to change, goes byte for byte.
 func withThinkingOnToolTurns(body []byte) []byte {
 	if !bytes.Contains(body, []byte(`"tool_use"`)) && !bytes.Contains(body, []byte(`"redacted_thinking"`)) {
@@ -307,7 +309,16 @@ func withThinkingOnToolTurns(body []byte) []byte {
 	if decodeJSON(body, &q) != nil || decodeJSON(q["messages"], &msgs) != nil {
 		return body
 	}
-	space, _ := json.Marshal(aBlock{Type: "thinking", Thinking: noReasoning})
+	// aBlock's signature is omitempty, which would leave the field out of
+	// the block added below; OpenRouter's Anthropic endpoint refuses a
+	// thinking block with no signature (400, #2883), so it is written here
+	// with an empty one, which it takes.
+	type synthThinking struct {
+		Type      string `json:"type"`
+		Thinking  string `json:"thinking"`
+		Signature string `json:"signature"`
+	}
+	space, _ := json.Marshal(synthThinking{Type: "thinking", Thinking: noReasoning})
 	changed := false
 	// afterTool: the message before is the user's tool results alone
 	afterTool := false

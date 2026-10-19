@@ -107,10 +107,10 @@ func TestDeepSeekAnthropicToolTurnsGetThinking(t *testing.T) {
 		}
 		ms := sentAnthropicMessages(t, f.got)
 		sameJSON(t, ms[0], `{"role":"user","content":"fix the login bug"}`)
-		sameJSON(t, ms[1], `{"role":"assistant","content":[{"type":"thinking","thinking":" "},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}`)
+		sameJSON(t, ms[1], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}`)
 		sameJSON(t, ms[3], `{"role":"assistant","content":[{"type":"thinking","thinking":"Read main.go.","signature":"EqQBCkgIBxABGAIiQL"},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"cat main.go"}}]}`)
-		sameJSON(t, ms[5], `{"role":"assistant","content":[{"type":"thinking","thinking":" "},{"type":"text","text":"Checking the test."},{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"go test"}}]}`)
-		sameJSON(t, ms[7], `{"role":"assistant","content":[{"type":"thinking","thinking":" "},{"type":"thinking","thinking":"Fine.","signature":"EqQBCkgIBxAB"},{"type":"text","text":"It passes."}]}`)
+		sameJSON(t, ms[5], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"text","text":"Checking the test."},{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"go test"}}]}`)
+		sameJSON(t, ms[7], `{"role":"assistant","content":[{"type":"thinking","thinking":" ","signature":""},{"type":"thinking","thinking":"Fine.","signature":"EqQBCkgIBxAB"},{"type":"text","text":"It passes."}]}`)
 	}
 
 	// another vendor's model, and a Claude model, on the same upstream are
@@ -140,7 +140,7 @@ func TestDeepSeekAnthropicNoThinkingField(t *testing.T) {
 	if code, b := postTo(t, New(), "/v1/messages", body); code != 200 {
 		t.Fatalf("%d: %s", code, b)
 	}
-	if ms := sentAnthropicMessages(t, f.got); !strings.HasPrefix(string(ms[1]), `{"content":[{"type":"thinking","thinking":" "}`) {
+	if ms := sentAnthropicMessages(t, f.got); !strings.HasPrefix(string(ms[1]), `{"content":[{"type":"thinking","thinking":" ","signature":""}`) {
 		t.Errorf("first tool turn sent as %s", ms[1])
 	}
 }
@@ -215,5 +215,54 @@ func TestWithThinkingOnToolTurnsUnchanged(t *testing.T) {
 	}
 	if !anthropicReplaysThinking("api.deepseek.com", "deepseek-flash") || !anthropicReplaysThinking("relay.example", "DeepSeek-V4-Pro") {
 		t.Error("DeepSeek not replayed")
+	}
+}
+
+// The thinking block withThinkingOnToolTurns adds carries an empty
+// signature: OpenRouter's Anthropic endpoint refuses one without it (400,
+// #2883). A signed block already in the message keeps its own signature.
+func TestWithThinkingOnToolTurnsSignsTheBlockItAdds(t *testing.T) {
+	in := `{"model":"deepseek/deepseek-v4.1-flash-1017","messages":[
+		{"role":"user","content":"ls"},
+		{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"main.go"}]},
+		{"role":"assistant","content":[{"type":"thinking","thinking":"Fine.","signature":"EqQBCkgIBxAB"},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"cat main.go"}}]}]}`
+	ms := sentAnthropicMessages(t, withThinkingOnToolTurns([]byte(in)))
+	block := func(i int) map[string]json.RawMessage {
+		t.Helper()
+		var m struct {
+			Content []map[string]json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(ms[i], &m); err != nil {
+			t.Fatalf("message %d: %v: %s", i, err, ms[i])
+		}
+		if len(m.Content) == 0 {
+			t.Fatalf("message %d has no block: %s", i, ms[i])
+		}
+		return m.Content[0]
+	}
+	// the first assistant turn was a bare tool_use: the added block has
+	// both keys, with the signature empty
+	added := block(1)
+	if string(added["type"]) != `"thinking"` {
+		t.Fatalf("first block added was not thinking: %s", ms[1])
+	}
+	if _, ok := added["thinking"]; !ok {
+		t.Errorf("added thinking block has no thinking: %s", ms[1])
+	}
+	sig, ok := added["signature"]
+	if !ok {
+		t.Fatalf("added thinking block has no signature: %s", ms[1])
+	}
+	if string(sig) != `""` {
+		t.Errorf("added signature = %s, want an empty string", sig)
+	}
+	// the second assistant turn's signed thinking keeps its own signature
+	signed := block(3)
+	if string(signed["type"]) != `"thinking"` {
+		t.Fatalf("signed turn's first block is not thinking: %s", ms[3])
+	}
+	if got := string(signed["signature"]); got != `"EqQBCkgIBxAB"` {
+		t.Errorf("signed thinking's signature = %s, want %q", got, "EqQBCkgIBxAB")
 	}
 }
