@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -423,6 +424,21 @@ func (t *tail) last() string {
 	return l
 }
 
+// stdioCommand is the program checkStdio starts for a server's command: a
+// bare name is resolved as an agent would run it (proc.FindTool: PATH,
+// then the folders a user's tools are installed in — a Node version
+// manager's among them), so npx is found when magpie's own PATH doesn't
+// reach it; an absolute path is taken as it is.
+func stdioCommand(name string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	if p := proc.FindTool(name); p != "" {
+		return p
+	}
+	return name
+}
+
 func checkStdio(ctx context.Context, s *Server) ServerHealth {
 	// started as the agents start it: in the environment magpie has, with
 	// the server's own variables over it
@@ -430,7 +446,7 @@ func checkStdio(ctx context.Context, s *Server) ServerHealth {
 	if len(unset) > 0 {
 		return failed("novar", strings.Join(unset, ", "))
 	}
-	cmd := proc.Command(s.Command, s.Args...)
+	cmd := proc.Command(stdioCommand(s.Command), s.Args...)
 	// Agents start MCP servers from a project or home directory. A magpie
 	// launched from a shortcut (Windows Start menu) often has C:\Windows\system32
 	// as its own cwd, which is not writable; inherit that and a server that

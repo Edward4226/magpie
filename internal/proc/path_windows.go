@@ -16,7 +16,8 @@ func UserPath() {}
 
 // UserBinDirs are the folders a user's command-line tools are installed in
 // that exist here — npm's global one, bun's, volta's, pnpm's, mise's
-// shims, the standalone installers' — for finding one PATH doesn't reach.
+// shims, fnm's Node versions, the standalone installers' — for finding one
+// PATH doesn't reach.
 func UserBinDirs() []string {
 	home, _ := os.UserHomeDir()
 	// mise's data folder: MISE_DATA_DIR, else XDG_DATA_HOME's mise (which
@@ -28,6 +29,11 @@ func UserBinDirs() []string {
 	if d := os.Getenv("MISE_DATA_DIR"); filepath.IsAbs(d) {
 		mise = d
 	}
+	// fnm's root: FNM_DIR as its installer sets it, else under APPDATA
+	fnm := filepath.Join(appdir.Getenv("APPDATA"), "fnm")
+	if d := os.Getenv("FNM_DIR"); filepath.IsAbs(d) {
+		fnm = d
+	}
 	known := []string{
 		filepath.Join(appdir.Getenv("APPDATA"), "npm"),
 		filepath.Join(home, ".local", "bin"),
@@ -36,6 +42,7 @@ func UserBinDirs() []string {
 		filepath.Join(appdir.Getenv("LOCALAPPDATA"), "pnpm"),
 		filepath.Join(mise, "shims"),
 	}
+	known = append(known, fnmBins(fnm)...)
 	var have []string
 	for _, d := range known {
 		if st, err := os.Stat(d); filepath.IsAbs(d) && err == nil && st.IsDir() {
