@@ -820,8 +820,11 @@ func (p Provider) fetchOne(ctx context.Context) (fetched, error) {
 	if len(asked) > 1 {
 		parts = sidesOf(sides)
 	}
+	// a Command Code key is offered its plan's models alone: the vendor's
+	// list names the ones bought on demand beside them (#1417), and every
+	// other provider's list is left as it came
 	return fetched{
-		catalog.WithDrawers(p.planModels(out), catalog.PublicDrawers(ctx, base)),
+		catalog.WithDrawers(p.planModels(cmdKeepPlan(ctx, p, out)), catalog.PublicDrawers(ctx, base)),
 		base,
 		parts,
 		answered,
