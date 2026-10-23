@@ -94,3 +94,27 @@ func TestOpenCodeEndpointsFilledIn(t *testing.T) {
 		}
 	}
 }
+
+// IsOpenCodeGoAt reads the configured endpoint for the protocol that will
+// serve the request, not a display name or provider id. A lookalike relay
+// isn't given OpenCode Go's workaround, nor is a proxy endpoint beside Go.
+func TestIsOpenCodeGoAt(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		p     Provider
+		proto Protocol
+		want  bool
+	}{
+		{"zen gateway", Provider{ID: "opencode-go", Name: "OpenCode Go", Chat: "https://opencode.ai/zen/v1"}, Chat, false},
+		{"go gateway", Provider{ID: "relay", Name: "Relay", Chat: "https://opencode.ai/zen/go/v1"}, Chat, true},
+		{"go inference gateway", Provider{ID: "relay", Name: "Relay", Responses: "https://opencode.ai/inference/go/v1"}, Responses, true},
+		{"lookalike name", Provider{ID: "opencode-go", Name: "OpenCode Go", Chat: "https://relay.test/v1"}, Chat, false},
+		{"another path", Provider{ID: "opencode-go", Chat: "https://opencode.ai/other/v1"}, Chat, false},
+		{"proxy beside go", Provider{ID: "relay", Chat: "https://opencode.ai/zen/go/v1", Responses: "https://proxy.test/v1"}, Responses, false},
+		{"go beside proxy", Provider{ID: "relay", Chat: "https://opencode.ai/zen/go/v1", Responses: "https://proxy.test/v1"}, Chat, true},
+	} {
+		if got := c.p.IsOpenCodeGoAt(c.proto); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}

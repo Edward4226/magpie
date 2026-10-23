@@ -4060,6 +4060,12 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		// the tier it goes at, the user's own fields in it (#1784)
 		noteWireTier(ctx, to, body)
 	}
+	if to == provider.Responses && dropsAccessPrograms(p, to) {
+		// OpenCode Go refuses Codex's Daybreak field (#3172). Do this after
+		// extraBody, which may put it back, and only for this protocol and
+		// endpoint: every other Responses upstream keeps it.
+		body = withoutTopMember(body, "access_programs")
+	}
 	base := p.Base(to)
 	if p.IsOpenCode() && p.OpenCodeFree(gjson.GetBytes(body, "model").String()) {
 		// Zen's free tier answers at the inference API's URL alone (zenfree.go)

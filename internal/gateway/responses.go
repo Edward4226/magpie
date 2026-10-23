@@ -897,6 +897,14 @@ func replaysReasoning(model, host string) bool {
 		!strings.HasSuffix(host, ".openai.azure.com")
 }
 
+// dropsAccessPrograms is whether the endpoint serving proto doesn't take
+// Codex's access_programs. OpenCode Go answers the field with an unavailable
+// endpoint for every model tried, DeepSeek and GLM included (#3172);
+// OpenAI's own, ChatGPT's and OpenCode Zen's backends do take it.
+func dropsAccessPrograms(p provider.Provider, proto provider.Protocol) bool {
+	return p.IsOpenCodeGoAt(proto)
+}
+
 // withReasoningText gives each reasoning item in a Responses request that
 // carries no reasoning_text its summary as one, else noReasoning, and has
 // each step that needs one lead with a reasoning item (reasonFirst), for an

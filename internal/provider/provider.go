@@ -1633,6 +1633,15 @@ func (p Provider) IsOpenCode() bool {
 	return OpenCodeURL("//" + p.Host()) // its port, if it names one, aside
 }
 
+// IsOpenCodeGoAt reports whether proto goes to OpenCode Go's gateway, whose
+// bases are .../zen/go or the inference API's .../inference/go. Zen's gateway
+// and a provider of the user's own are not, even at opencode.ai. The protocol
+// matters: one provider can send Responses to a proxy of the user's while its
+// other APIs go to Go.
+func (p Provider) IsOpenCodeGoAt(proto Protocol) bool {
+	return openCodeGateway(p.Base(proto)) == "go"
+}
+
 // IsBedrock reports whether the provider is Amazon Bedrock: its runtime
 // (bedrock-runtime.{region}.amazonaws.com) or its Mantle endpoint
 // (bedrock-mantle.{region}.api.aws), made from either's preset or at

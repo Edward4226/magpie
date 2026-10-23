@@ -538,6 +538,65 @@ func eachMemberAt(obj []byte, f func(k0, k1, v0, v1 int) bool) {
 	}
 }
 
+// withoutTopMember removes every top-level member named key, keeping every
+// other byte of the body as it came. A body that isn't a JSON object is
+// returned unchanged: a parse failure is not permission to rewrite it.
+func withoutTopMember(body []byte, key string) []byte {
+	if len(body) < 2 {
+		return body
+	}
+	start := skipJSONSpace(body, 0)
+	raw := trimJSON(body)
+	if len(raw) < 2 || raw[0] != '{' {
+		return body
+	}
+	if len(raw) >= validMemoMin {
+		if valid, _ := longBody(raw); !valid {
+			return body
+		}
+	} else if !jsonCheck(raw) {
+		return body
+	}
+	var members []memberSpan
+	eachMemberAt(raw, func(k0, k1, v0, v1 int) bool {
+		members = append(members, memberSpan{k0, k1, v0, v1})
+		return true
+	})
+	var cuts [][2]int
+	for i := 0; i < len(members); {
+		m := members[i]
+		if !keyIs(raw[m.k0:m.k1], key) {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(members) && keyIs(raw[members[j].k0:members[j].k1], key) {
+			j++
+		}
+		switch {
+		case j < len(members):
+			cuts = append(cuts, [2]int{members[i].k0, members[j].k0})
+		case i > 0:
+			cuts = append(cuts, [2]int{members[i-1].v1, members[j-1].v1})
+		default:
+			cuts = append(cuts, [2]int{1, len(raw) - 1})
+		}
+		i = j
+	}
+	if len(cuts) == 0 {
+		return body
+	}
+	out := append([]byte(nil), body[:start]...)
+	last := 0
+	for _, c := range cuts {
+		out = append(out, raw[last:c[0]]...)
+		last = c[1]
+	}
+	out = append(out, raw[last:]...)
+	out = append(out, body[start+len(raw):]...)
+	return out
+}
+
 // eachElement calls f with each element of arr, a valid JSON array, until
 // f returns false.
 func eachElement(arr []byte, f func(el []byte) bool) {
