@@ -699,8 +699,11 @@ func withPicks(a, pk Provider) Provider {
 	a.MaxRPM = pk.MaxRPM
 	// its decision API (System One), which a k=v set on the subscription
 	// names for it (#3349): the plugin serves the plan's chat models, but
-	// only this says where its Jev answers
-	a.Decide = pk.Decide
+	// only this says where its Jev answers. What the provider says itself
+	// (a plugin's declared decide endpoint) stands when nothing was set
+	if pk.Decide != "" {
+		a.Decide = pk.Decide
+	}
 	// the extra body fields written for it, which a ChatGPT account's
 	// requests take (WithExtraBody, magpie-releases#18)
 	a.ExtraBody = pk.ExtraBody
