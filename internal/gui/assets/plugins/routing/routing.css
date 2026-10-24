@@ -12,6 +12,8 @@
 .rt-wires path.live { stroke: var(--agent, var(--muted)); stroke-dasharray: 3 5; animation: rtflow .7s linear infinite; }
 /* lit: the way the request shown went, over; only a request in flight flows (#2386) */
 .rt-wires path.lit { stroke: var(--agent, var(--muted)); }
+/* trail: the same completed way from the agent into magpie, still coloured */
+.rt-wires path.trail { stroke: var(--agent, var(--muted)); }
 .rt-wires path.rest { stroke-dasharray: 2 6; opacity: .45; }
 @keyframes rtflow { to { stroke-dashoffset: -8; } }
 /* the magpies, over the nodes: one carries each request out, another

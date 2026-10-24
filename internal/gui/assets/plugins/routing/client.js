@@ -302,6 +302,7 @@ function routingPage(part) {
   new ResizeObserver(() => { const w = colA.clientWidth; if (w !== metaW) { metaW = w; metaFit(); } }).observe(colA);
 
   const path = () => { const p = document.createElementNS(NS, "path"); wires.appendChild(p); return p; };
+  const activeWire = (p) => p.classList.contains("live") || p.classList.contains("lit") || p.classList.contains("trail");
   const setText = (e, s) => { if (e.textContent !== s) e.textContent = s; };
   const tick = (e) => { e.classList.remove("tick"); void e.offsetWidth; e.classList.add("tick"); };
 
@@ -1875,6 +1876,17 @@ function routingPage(part) {
     wire.classList.toggle("live", on && now);
     wire.classList.toggle("lit", on && !now);
   }
+  // SVG paints in document order. Keep every wire on the request shown after
+  // the idle ones, so a later row's grey way from magpie can't cut across it.
+  function raiseActiveWires() {
+    const ps = [...wires.querySelectorAll("path[d]")];
+    let seenActive = false, covered = false;
+    for (const p of ps) {
+      if (activeWire(p)) seenActive = true;
+      else if (seenActive) covered = true;
+    }
+    if (covered) for (const p of ps) if (activeWire(p)) wires.append(p);
+  }
 
   // what a row says now: resting, answering, or what routing weighed it by
   function render() {
@@ -1882,6 +1894,7 @@ function routingPage(part) {
     hubText();
     const n = now(), rs = staged();
     const trying = new Set(), busy = new Set();
+    const litAgents = new Set();
     for (const r of rs) for (const tr of r.tries) if (!tr.done) { trying.add(tryseat(r, tr)); busy.add(r.agent); }
     const onWire = new Set();
     for (const f of flying.values()) { onWire.add(f.id); busy.add(f.agent); }
@@ -1949,7 +1962,10 @@ function routingPage(part) {
       row.li.classList.toggle("low", !!(!w.routing && w.known && w.used >= 90));
       row.li.classList.toggle("rest", !!resting || gave.has(id));
       row.li.classList.toggle("left", !!w.unlisted);
-      if (on) row.wire.style.setProperty("--agent", hueOf(r.agent));
+      if (on) {
+        row.wire.style.setProperty("--agent", hueOf(r.agent));
+        litAgents.add(r.agent);
+      }
       row.wire.classList.toggle("rest", !!resting || !!w.unlisted);
     }
     // a fold tells of its keys together: the one answering or that
@@ -1993,7 +2009,12 @@ function routingPage(part) {
       lightRow(s.li, s.wire, !!lit, ms.some((row) => row.li.classList.contains("now")));
       if (lit) s.wire.style.setProperty("--agent", lit.wire.style.getPropertyValue("--agent"));
     }
-    for (const [id, a] of agents) a.wire.classList.toggle("live", busy.has(id));
+    for (const [id, a] of agents) {
+      const flowing = busy.has(id), trail = !flowing && litAgents.has(id);
+      a.wire.classList.toggle("live", flowing);
+      a.wire.classList.toggle("trail", trail);
+    }
+    raiseActiveWires();
   }
 
   // ---------- the log: how one request was routed ----------
