@@ -51,13 +51,13 @@ function server(lang) {
   };
 }
 
-// each language's two titles, and a word of each hint
+// each language's two titles, and the generic System One hint
 const L = {
-  en: { jev: "Jev endpoint", one: "System One endpoint", own: "The address its decision models are asked at, POST …/systemone under it" },
-  zh: { jev: "Jev 端点", one: "System One 端点", own: "该供应商决策模型的请求地址，在其下 POST …/systemone" },
-  "zh-TW": { jev: "Jev 端點", one: "System One 端點", own: "該供應商決策模型的請求位址，在其下 POST …/systemone" },
-  ja: { jev: "Jev エンドポイント", one: "System One エンドポイント", own: "このプロバイダーの判定モデルに問い合わせるアドレスで、その下の POST …/systemone を使います" },
-  de: { jev: "Jev-Endpunkt", one: "System-One-Endpunkt", own: "Die Adresse, unter der die Entscheidungsmodelle dieses Anbieters abgefragt werden, darunter POST …/systemone" },
+  en: { jev: "Jev endpoint", one: "System One endpoint", own: "Only a routing group's classifier uses this. Enter the base address: magpie sends the decision request to …/systemone beneath it. Ordinary conversations don't use it; leave the default for them." },
+  zh: { jev: "Jev 端点", one: "System One 端点", own: "只有路由组用作分类的模型会使用这里。请填写基础地址，magpie 会把决策请求发到其下的 …/systemone。普通对话不会使用它，保持默认即可。" },
+  "zh-TW": { jev: "Jev 端點", one: "System One 端點", own: "只有路由組用來分類的模型會使用這裡。請填寫基礎位址，magpie 會把決策請求傳送到其下的 …/systemone。一般對話不會使用它，保留預設值即可。" },
+  ja: { jev: "Jev エンドポイント", one: "System One エンドポイント", own: "ルーティンググループの分類モデルだけがこれを使います。ベースアドレスを入力すると、magpie はその下の …/systemone に判定リクエストを送ります。通常の会話では使わないため、既定値のままで構いません。" },
+  de: { jev: "Jev-Endpunkt", one: "System-One-Endpunkt", own: "Nur der Klassifikator einer Weiterleitungsgruppe verwendet dies. Geben Sie die Stammadresse ein; magpie sendet die Entscheidungsanfrage an …/systemone darunter. Normale Unterhaltungen verwenden sie nicht, daher können Sie den Standardwert beibehalten." },
 };
 
 // the decision address field's title and hint, by its input

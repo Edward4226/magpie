@@ -9853,7 +9853,7 @@ function drawEditor(p, presetID) {
     // (OpenRouter, OpenCode Zen, Ollama …) asks its own decision models
     // on System One, and Jev's title and Cloudflare's example aren't its
     const jev = decideOnly(p || pr) && /jev/i.test(pr?.name || p?.name || "");
-    ed.append(...field(t(jev ? "Jev endpoint" : "System One endpoint"), du, tmpl().includes(WORKSPACE) ? t("The address the decision model is asked at, POST …/systemone under it; the workspace ID above fills it in") : jev ? t("The address Jev is asked at; paste the one from your gateway's docs, e.g. Cloudflare's …/accounts/<account id>/ai/run") : t("The address its decision models are asked at, POST …/systemone under it")));
+    ed.append(...field(t(jev ? "Jev endpoint" : "System One endpoint"), du, tmpl().includes(WORKSPACE) ? t("The address the decision model is asked at, POST …/systemone under it; the workspace ID above fills it in") : jev ? t("The address Jev is asked at; paste the one from your gateway's docs, e.g. Cloudflare's …/accounts/<account id>/ai/run") : t("Only a routing group's classifier uses this. Enter the base address: magpie sends the decision request to …/systemone beneath it. Ordinary conversations don't use it; leave the default for them.")));
   }
 
   if (!custom && !(decides && !p)) {
