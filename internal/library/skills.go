@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -780,6 +781,9 @@ func fetch(src Source) (string, error) {
 	}
 	resp, _, err := get(tarballURL(src.Repo, src.Ref))
 	if err != nil {
+		if fetchInterrupted(err) {
+			return fetchSkillFiles(src)
+		}
 		return "", fmt.Errorf("couldn't reach GitHub: %w", err)
 	}
 	token := false
@@ -791,6 +795,9 @@ func fetch(src Source) (string, error) {
 				ref = "/" + url.PathEscape(src.Ref)
 			}
 			if resp, token, err = get(githubAPI + "/repos/" + src.Repo + "/tarball" + ref); err != nil {
+				if fetchInterrupted(err) {
+					return fetchSkillFiles(src)
+				}
 				return "", fmt.Errorf("couldn't reach GitHub: %w", err)
 			}
 		}
@@ -822,16 +829,32 @@ func fetch(src Source) (string, error) {
 	}
 	if err := untar(resp.Body, tmp); err != nil {
 		os.RemoveAll(tmp)
-		if errors.Is(err, errTooBig) {
+		if errors.Is(err, errTooBig) || fetchInterrupted(err) {
 			// a repository that is mostly something else (an app with its
-			// skills beside it, #1941): only the skills' folders
+			// skills beside it, #1941): only the skills' folders. A whole
+			// repository whose download or unpacking was cut short falls
+			// back the same way, once (#2916).
 			resp.Body.Close()
-			tooBig.add(src)
+			if errors.Is(err, errTooBig) {
+				tooBig.add(src)
+			}
 			return fetchSkillFiles(src)
 		}
 		return "", err
 	}
 	return tmp, nil
+}
+
+// fetchInterrupted is a whole-repository download that timed out or ended
+// before its body could be read whole. Repository-list and HTTP status
+// errors don't pass through here, so a 404, auth failure or rate limit
+// keeps its own meaning instead of turning into a skill-folder fetch.
+func fetchInterrupted(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var timeout net.Error
+	return errors.As(err, &timeout) && timeout.Timeout()
 }
 
 // untar unpacks a GitHub tarball, whose one top folder is dropped.

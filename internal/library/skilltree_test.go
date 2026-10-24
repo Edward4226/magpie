@@ -11,6 +11,7 @@ import (
 	slash "path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,9 @@ type fakeBigRepo struct {
 	mu       sync.Mutex
 	raw      []string
 	tarballs int
+	trees    int
+	stopAt   int
+	answer   int
 	files    map[string]string
 	serve    map[string]string // what raw hands out, where it differs
 }
@@ -53,10 +57,25 @@ func newFakeBigRepo(t *testing.T) *fakeBigRepo {
 	codeload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.tarballs++
+		stopAt, answer := g.stopAt, g.answer
 		g.mu.Unlock()
-		w.Write(tarball(t, g.files))
+		if answer != 0 {
+			http.Error(w, http.StatusText(answer), answer)
+			return
+		}
+		body := tarball(t, g.files)
+		if stopAt > 0 && stopAt < len(body) {
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusOK)
+			w.Write(body[:stopAt])
+			return
+		}
+		w.Write(body)
 	}))
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		g.trees++
+		g.mu.Unlock()
 		if !strings.HasPrefix(r.URL.Path, "/repos/vectorize-io/hindsight/git/trees/") {
 			http.NotFound(w, r)
 			return
@@ -171,6 +190,69 @@ func TestSkillsFromATooBigRepository(t *testing.T) {
 	defer g.mu.Unlock()
 	if g.tarballs != 1 {
 		t.Errorf("codeload was asked %d times; once found too big, the repository's skills are fetched alone", g.tarballs)
+	}
+}
+
+// #2916: a whole-repository tarball that stops midway used to end the
+// probe even when the repository's small skill folders could be fetched.
+func TestInterruptedWholeRepositoryFallsBackToSkillFiles(t *testing.T) {
+	sandbox(t)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	g := newFakeBigRepo(t)
+	body := tarball(t, g.files)
+	g.mu.Lock()
+	g.stopAt = len(body) / 2
+	g.mu.Unlock()
+	maxFetch = 1 << 20 // the fixture's own file must not reach the size limit first
+
+	p, err := ProbeSkills("https://github.com/vectorize-io/hindsight")
+	if err != nil {
+		t.Fatalf("probe after an interrupted tarball: %v", err)
+	}
+	if len(p.Candidates) != 4 {
+		t.Fatalf("candidates after the skill-folder fallback: %+v", p.Candidates)
+	}
+	g.mu.Lock()
+	tarballs, trees := g.tarballs, g.trees
+	g.mu.Unlock()
+	if tarballs != 1 || trees != 1 {
+		t.Fatalf("fetches: %d whole, %d skill lists; want one of each", tarballs, trees)
+	}
+}
+
+// A tarball GitHub itself refused is not an interrupted download: its 404,
+// auth or rate-limit answer stays the probe's answer, and no fallback hides it.
+func TestPermanentRepositoryErrorDoesNotFallBack(t *testing.T) {
+	sandbox(t)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	g := newFakeBigRepo(t)
+	for _, tc := range []struct {
+		status int
+		want   string
+	}{
+		{http.StatusNotFound, "GitHub has no repository vectorize-io/hindsight"},
+		{http.StatusUnauthorized, "GitHub answered 401 Unauthorized"},
+		{http.StatusForbidden, "GitHub is limiting requests from here"},
+		{http.StatusTooManyRequests, "GitHub is limiting requests from here"},
+	} {
+		t.Run(strconv.Itoa(tc.status), func(t *testing.T) {
+			g.mu.Lock()
+			g.answer = tc.status
+			before := g.trees
+			g.mu.Unlock()
+			_, err := ProbeSkills("https://github.com/vectorize-io/hindsight")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("answer: %v, want %q", err, tc.want)
+			}
+			g.mu.Lock()
+			trees := g.trees
+			g.mu.Unlock()
+			if trees != before {
+				t.Fatalf("the skill-folder fallback ran for a permanent %d", tc.status)
+			}
+		})
 	}
 }
 

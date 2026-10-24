@@ -486,9 +486,10 @@ magpie.plugin("library", (ctx) => {
   // One change is on its way at a time: while it is, the page's buttons
   // can't be pressed and the one pressed says it is saving, so a second
   // click doesn't make or remove a set twice (Hipple, #1624: a minute a
-  // click with nothing to show for it).
+  // click with nothing to show for it). An onError callback keeps a failure
+  // beside the control that caused it instead of in the short-lived footer.
   let changing = false;
-  async function change(path, body, done) {
+  async function change(path, body, done, onError) {
     if (changing) return false;
     changing = true;
     const ev = window.event;
@@ -507,7 +508,10 @@ magpie.plugin("library", (ctx) => {
       ok = true;
       return true;
     } catch (e) {
-      status(e.message, "err", 6000);
+      if (onError) {
+        status(""); // the caller keeps the failure beside what failed
+        onError(e);
+      } else status(e.message, "err", 6000);
       return false;
     } finally {
       changing = false;
@@ -4501,6 +4505,11 @@ magpie.plugin("library", (ctx) => {
 
   function probeResult(p) {
     const box = el("div", "lib-probe");
+    const clearInstallError = () => {
+      if (!p.installError) return;
+      p.installError = "";
+      box.querySelector(".lib-install-error")?.remove();
+    };
     const c = p.found.candidates;
     // skills too big to install on their own, left out of the list (#2062)
     const left = (p.found.left || []).map((x) => el("div", "lib-none lib-left", t("{name} is too big to install: {size}, over the {limit} a skill may be", { name: x.path.split("/").pop() || p.found.source, size: Math.round(x.size / 1048576) + " MB", limit: "200 MB" })));
@@ -4513,16 +4522,17 @@ magpie.plugin("library", (ctx) => {
     const fresh = c.filter((x) => !x.have);
     if (fresh.length > 1) {
       const allOn = fresh.every((x) => p.pick.has(x.path));
-      head.append(button(allOn ? t("Select none") : t("Select all"), "", () => { for (const x of fresh) allOn ? p.pick.delete(x.path) : p.pick.add(x.path); render(); }));
+      head.append(button(allOn ? t("Select none") : t("Select all"), "", () => { clearInstallError(); for (const x of fresh) allOn ? p.pick.delete(x.path) : p.pick.add(x.path); render(); }));
     }
     box.append(head, ...left);
+    if (p.installError) box.append(el("div", "lib-err lib-install-error", p.installError));
     if (c.length > 8) {
       const f = el("input", "lib-filter");
       f.type = "text";
       f.dataset.lib = "filter";
       f.placeholder = t("Filter…");
       f.value = p.filter;
-      f.oninput = () => { p.filter = f.value; drawList(); };
+      f.oninput = () => { clearInstallError(); p.filter = f.value; drawList(); };
       f.onkeydown = (e) => e.stopPropagation();
       box.append(f);
     }
@@ -4537,7 +4547,7 @@ magpie.plugin("library", (ctx) => {
         cb.type = "checkbox";
         cb.checked = p.pick.has(x.path);
         cb.disabled = x.have;
-        cb.onchange = () => { if (cb.checked) p.pick.add(x.path); else p.pick.delete(x.path); syncGo(); };
+        cb.onchange = () => { clearInstallError(); if (cb.checked) p.pick.add(x.path); else p.pick.delete(x.path); syncGo(); };
         const w = el("span", "who");
         w.append(el("span", "name", x.name), el("span", "sub", x.description || x.path || ""));
         r.append(cb, w);
@@ -4549,16 +4559,18 @@ magpie.plugin("library", (ctx) => {
     box.append(list);
     const foot = el("div", "lib-probefoot");
     const agentsBox = el("div");
-    const drawAgents = () => agentsBox.replaceChildren(agentChips(skillAgents(), p.agents, (n) => { p.agents = n; drawAgents(); }, { names: false, all: true }));
+    const drawAgents = () => agentsBox.replaceChildren(agentChips(skillAgents(), p.agents, (n) => { clearInstallError(); p.agents = n; drawAgents(); }, { names: false, all: true }));
     drawAgents();
     foot.append(el("span", "note", t("for")), agentsBox, el("span", "grow"));
     foot.append(button(t("Cancel"), "", () => { probe = null; render(); }));
     const go = button("", "primary", async () => {
+      clearInstallError();
       go.disabled = true;
       go.textContent = t("Installing…");
       const n = p.pick.size;
-      if (await change("skills/install", { source: p.source, paths: [...p.pick], agents: p.agents }, n === 1 ? t("1 skill installed") : t("{n} skills installed", { n }))) { probe = null; render(); }
-      else { go.disabled = false; syncGo(); }
+      const onError = (e) => { p.installError = e.message; };
+      if (await change("skills/install", { source: p.source, paths: [...p.pick], agents: p.agents }, n === 1 ? t("1 skill installed") : t("{n} skills installed", { n }), onError)) probe = null;
+      render();
     });
     const syncGo = () => { const n = p.pick.size; go.textContent = n === 1 ? t("Install 1 skill") : t("Install {n} skills", { n }); go.disabled = !n; };
     syncGo();
