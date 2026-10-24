@@ -49,10 +49,29 @@ func TestVersionRunsOnce(t *testing.T) {
 		t.Fatalf("run %d times", n)
 	}
 
-	// a timeout is kept like any other failure: it isn't asked again until
-	// the binary changes (#2693)
-	other := filepath.Join(dir, "slow")
-	testenv.Program(t, other, "#!/bin/sh\n")
+	// an npm CLI: the package says it, nothing is run
+	asked := 0
+	pkg := filepath.Join(dir, "lib", "node_modules", "@openai", "codex")
+	os.MkdirAll(filepath.Join(pkg, "bin"), 0o755)
+	os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"name":"@openai/codex","version":"0.162.0"}`), 0o644)
+	os.WriteFile(filepath.Join(pkg, "bin", "codex.js"), []byte("#!/usr/bin/env node\n"), 0o755)
+	link := filepath.Join(dir, "bin", "codex")
+	os.MkdirAll(filepath.Dir(link), 0o755)
+	if err := os.Symlink(filepath.Join(pkg, "bin", "codex.js"), link); err != nil {
+		t.Fatal(err)
+	}
+	if v := Version(link); v != "0.162.0" || asked != 0 {
+		t.Fatalf("npm CLI: %q, run %d times", v, asked)
+	}
+}
+
+// A timeout is kept like any other failure, and a changed binary is asked
+// again (#2693). This doesn't run a shell, so it covers Windows too.
+func TestVersionKeepsTimeoutFailure(t *testing.T) {
+	other := filepath.Join(t.TempDir(), "slow")
+	if err := os.WriteFile(other, []byte("not a shim"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	old := runVersion
 	t.Cleanup(func() { runVersion = old })
 	asked := 0
@@ -67,21 +86,6 @@ func TestVersionRunsOnce(t *testing.T) {
 	Version(other)
 	if asked != 2 {
 		t.Fatalf("a changed timed-out CLI was asked %d times", asked)
-	}
-
-	// an npm CLI: the package says it, nothing is run
-	asked = 0
-	pkg := filepath.Join(dir, "lib", "node_modules", "@openai", "codex")
-	os.MkdirAll(filepath.Join(pkg, "bin"), 0o755)
-	os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"name":"@openai/codex","version":"0.162.0"}`), 0o644)
-	os.WriteFile(filepath.Join(pkg, "bin", "codex.js"), []byte("#!/usr/bin/env node\n"), 0o755)
-	link := filepath.Join(dir, "bin", "codex")
-	os.MkdirAll(filepath.Dir(link), 0o755)
-	if err := os.Symlink(filepath.Join(pkg, "bin", "codex.js"), link); err != nil {
-		t.Fatal(err)
-	}
-	if v := Version(link); v != "0.162.0" || asked != 0 {
-		t.Fatalf("npm CLI: %q, run %d times", v, asked)
 	}
 }
 
@@ -136,9 +140,12 @@ func TestVersionNeverRunsAnElectronApp(t *testing.T) {
 		if withVersionFile {
 			os.WriteFile(filepath.Join(app, "resources", "opencode-cli.version"), []byte("2.0.32\n"), 0o644)
 		}
-		bin = filepath.Join(app, "opencode")
-		if err := os.Symlink(real, bin); err != nil {
-			t.Fatal(err)
+		// Exercise the reporter's symlink where the OS allows one; Windows
+		// without symlink privilege still covers the resolved Electron path.
+		bin = real
+		link := filepath.Join(app, "opencode")
+		if err := os.Symlink(real, link); err == nil {
+			bin = link
 		}
 		return bin, marker
 	}
