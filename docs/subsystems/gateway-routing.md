@@ -227,7 +227,12 @@ recorded as a prediction failure (`noPrediction`).
   and sticky routing's in-memory state are each process's own: sticky
   routing is flushed to disk before the socket goes (`FlushSticks`), but
   while the old one drains, a provider's limits can be passed by what each
-  has in flight. `TestHandedOverGatewayFinishesItsStream`,
+  has in flight. OpenCode's conversation digest and generated session id
+  are kept in `opencode-sessions.json` when first made, under a file lock,
+  so a restart or the memory cache's bound doesn't change a session
+  OpenCode already routed and cached (`openCodeSession` in
+  [`opencode_client.go`](../../internal/provider/opencode_client.go)); the
+  seed itself isn't kept. `TestHandedOverGatewayFinishesItsStream`,
   `TestInheritedForAnotherAddressIsLetGo`, `TestToolCallOfTheMagpieBeforeGoesToIt` in
   [`handover_test.go`](../../internal/gateway/handover_test.go).
 

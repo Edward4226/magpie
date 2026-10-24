@@ -3,17 +3,28 @@ package provider
 import (
 	"container/list"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/steady"
 )
 
 // OpenCodeVersion is the OpenCode release magpie says it is to OpenCode's
@@ -189,19 +200,146 @@ var openCodeIDRe = regexp.MustCompile(`^[a-z]{3}_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
 
 const base62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// openCodeIDs is the clock and counter ids are made with, and the session
-// id made for each conversation.
+// openCodeIDs is the clock and counter ids are made with, and the most
+// recently used conversations' session ids.
 var openCodeIDs = struct {
 	sync.Mutex
 	last, counter int64
-	sessions      map[string]*list.Element // seed → its element in order
+	path          string
+	sessions      map[string]*list.Element // seed digest → its element in order
 	order         *list.List               // of openCodeKept, the least recently used first
 }{sessions: map[string]*list.Element{}, order: list.New()}
 
-type openCodeKept struct{ seed, id string }
+type openCodeKept struct{ key, id string }
 
-// openCodeKeep is how many conversations' session ids are kept.
+// openCodeKeep is how many conversations' session ids are kept in memory.
+// Every one made is also kept on disk, so crossing this bound doesn't
+// change a session OpenCode has already routed and cached.
 const openCodeKeep = 1000
+
+const openCodeSessionsVersion = 1
+
+// openCodeSessionsMu holds the session file's read, change and write one
+// at a time across magpies: a terminal's magpie and the gateway may meet
+// the same conversation for the first time together. The in-memory cache
+// is checked before this lock, so a turn does no file work.
+var openCodeSessionsMu = filelock.Mutex{Path: func() string { return openCodeSessionsPath() + ".lock" }}
+
+func openCodeSessionsPath() string {
+	return filepath.Join(appdir.Config(), "opencode-sessions.json")
+}
+
+// openCodeSessionKey names a seed in the session file without keeping the
+// client's UUID, prompt_cache_key or first message there. The domain keeps
+// another file's use of the same SHA-256 from meeting one of these.
+func openCodeSessionKey(seed string) string {
+	sum := sha256.Sum256(append([]byte("magpie/opencode-session/v1\x00"), seed...))
+	return hex.EncodeToString(sum[:])
+}
+
+type openCodeSessionStore struct {
+	Version  int               `json:"version"`
+	Sessions map[string]string `json:"sessions"`
+}
+
+// readOpenCodeSessions returns the mappings and the bytes it read. A file
+// that isn't there is no mappings; a file that can't be read or parsed is
+// an error, never taken for none.
+func readOpenCodeSessions(path string) (map[string]string, []byte, error) {
+	b, err := steady.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]string{}, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var f openCodeSessionStore
+	if err := json.Unmarshal(b, &f); err != nil {
+		return nil, b, fmt.Errorf("%s: %w", path, err)
+	}
+	if f.Version != openCodeSessionsVersion {
+		return nil, b, fmt.Errorf("%s: version %d, want %d", path, f.Version, openCodeSessionsVersion)
+	}
+	if f.Sessions == nil {
+		f.Sessions = map[string]string{}
+	}
+	for key, id := range f.Sessions {
+		if len(key) != sha256.Size*2 {
+			return nil, b, fmt.Errorf("%s: session key %q is not a SHA-256 digest", path, key)
+		}
+		if _, err := hex.DecodeString(key); err != nil || !openCodeRealSession(id) {
+			return nil, b, fmt.Errorf("%s: invalid session entry %q", path, key)
+		}
+	}
+	return f.Sessions, b, nil
+}
+
+// writeOpenCodeSessions replaces the file atomically. The folder and file
+// are private: the digests identify client conversations even though their
+// seeds aren't kept.
+func writeOpenCodeSessions(path string, sessions map[string]string) error {
+	b, err := json.MarshalIndent(openCodeSessionStore{Version: openCodeSessionsVersion, Sessions: sessions}, "", "  ")
+	if err != nil {
+		return err
+	}
+	path, err = edit.Target(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return steady.WriteFile(path, append(b, '\n'), 0o600)
+}
+
+// backupOpenCodeSessions copies a file that didn't parse aside before a new
+// one replaces it. Nothing is written over it when the copy fails.
+func backupOpenCodeSessions(path string, b []byte) error {
+	name := path + ".bad-" + time.Now().UTC().Format("20060102T150405.000000000")
+	return steady.WriteFile(name, b, 0o600)
+}
+
+// keptOpenCodeSession is a seed's session from the bounded memory cache.
+func keptOpenCodeSession(path, key string) (string, bool) {
+	openCodeIDs.Lock()
+	defer openCodeIDs.Unlock()
+	openCodeUseFileLocked(path)
+	if e, ok := openCodeIDs.sessions[key]; ok {
+		openCodeIDs.order.MoveToBack(e)
+		return e.Value.(openCodeKept).id, true
+	}
+	return "", false
+}
+
+// keepOpenCodeSession puts a session in the memory cache, dropping the
+// least recently used one when the cache is full.
+func keepOpenCodeSession(path, key, id string) {
+	openCodeIDs.Lock()
+	defer openCodeIDs.Unlock()
+	openCodeUseFileLocked(path)
+	if e, ok := openCodeIDs.sessions[key]; ok {
+		e.Value = openCodeKept{key, id}
+		openCodeIDs.order.MoveToBack(e)
+		return
+	}
+	if openCodeIDs.order.Len() >= openCodeKeep {
+		oldest := openCodeIDs.order.Front()
+		openCodeIDs.order.Remove(oldest)
+		delete(openCodeIDs.sessions, oldest.Value.(openCodeKept).key)
+	}
+	openCodeIDs.sessions[key] = openCodeIDs.order.PushBack(openCodeKept{key, id})
+}
+
+// openCodeUseFileLocked starts the memory cache afresh when appdir.Config,
+// as a test's HOME, names another file. The caller holds openCodeIDs.
+func openCodeUseFileLocked(path string) {
+	if openCodeIDs.path == path {
+		return
+	}
+	openCodeIDs.path = path
+	openCodeIDs.sessions = map[string]*list.Element{}
+	openCodeIDs.order = list.New()
+}
 
 // openCodeNewID is an id as OpenCode makes one (packages/schema/src/
 // identifier.ts): prefix_, 12 hex digits of the time in milliseconds times
@@ -244,9 +382,9 @@ func openCodeRealSession(id string) bool {
 
 // openCodeSession is the session id sent for the conversation seed names:
 // seed itself when it is one OpenCode could have made, else one made the
-// first time seed is seen and kept for its next turns (the last
-// openCodeKeep conversations' are kept), or a new one when there is no
-// seed.
+// first time seed is seen. Its digest and id are kept on disk, so a restart
+// or a trip out of the bounded memory cache keeps the session OpenCode
+// already routed and cached. A seed that is empty gets a one-off session.
 func openCodeSession(seed string) string {
 	if openCodeRealSession(seed) {
 		return seed
@@ -254,18 +392,39 @@ func openCodeSession(seed string) string {
 	if seed == "" {
 		return openCodeNewID("ses", true, time.Now())
 	}
-	id := openCodeNewID("ses", true, time.Now()) // made first: it takes the lock
-	openCodeIDs.Lock()
-	defer openCodeIDs.Unlock()
-	if e, ok := openCodeIDs.sessions[seed]; ok {
-		openCodeIDs.order.MoveToBack(e)
-		return e.Value.(openCodeKept).id
+	path, key := openCodeSessionsPath(), openCodeSessionKey(seed)
+	if id, ok := keptOpenCodeSession(path, key); ok {
+		return id
 	}
-	if openCodeIDs.order.Len() >= openCodeKeep {
-		oldest := openCodeIDs.order.Front()
-		openCodeIDs.order.Remove(oldest)
-		delete(openCodeIDs.sessions, oldest.Value.(openCodeKept).seed)
+	openCodeSessionsMu.Lock()
+	defer openCodeSessionsMu.Unlock()
+	if id, ok := keptOpenCodeSession(path, key); ok {
+		return id
 	}
-	openCodeIDs.sessions[seed] = openCodeIDs.order.PushBack(openCodeKept{seed, id})
+	sessions, raw, err := readOpenCodeSessions(path)
+	writable := err == nil
+	if err != nil {
+		log.Printf("opencode: %v", err)
+		if raw != nil {
+			if backupErr := backupOpenCodeSessions(path, raw); backupErr != nil {
+				log.Printf("opencode: keeping %s unchanged: copy it aside: %v", path, backupErr)
+			} else {
+				sessions, writable = map[string]string{}, true
+			}
+		}
+	}
+	if id, ok := sessions[key]; ok {
+		keepOpenCodeSession(path, key, id)
+		return id
+	}
+	id := openCodeNewID("ses", true, time.Now())
+	keepOpenCodeSession(path, key, id)
+	if !writable {
+		return id
+	}
+	sessions[key] = id
+	if err := writeOpenCodeSessions(path, sessions); err != nil {
+		log.Printf("opencode: keeping this run's session only: %v", err)
+	}
 	return id
 }
