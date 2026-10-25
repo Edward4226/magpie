@@ -77,6 +77,25 @@ func volcPlanOf(p Provider) (action, plan, region string, ok bool) {
 	return "", "", "", false
 }
 
+// volcKeyPlanOf is volcPlanOf for a provider whose one inference key can
+// be taken as the account the access key reads. The control plane doesn't
+// identify an inference key, so with more than one key on the provider
+// there is no safe binding to route by (#2849).
+func volcKeyPlanOf(p Provider) (action, plan, region string, ok bool) {
+	if p.Key == "" || p.AccessKeyID == "" || p.SecretAccessKey == "" {
+		return "", "", "", false
+	}
+	// WithKey replaces the first key with a later one but leaves that later
+	// one in Keys. Seeing p.Key there says this was one of several keys;
+	// another key on says the same of the first.
+	for _, k := range p.Keys {
+		if k.Key != "" && (k.Key == p.Key || !k.Off) {
+			return "", "", "", false
+		}
+	}
+	return volcPlanOf(p)
+}
+
 // volcRegion is the region of an Ark host: ark.cn-beijing.volces.com is
 // cn-beijing; cn-beijing when it names none.
 func volcRegion(host string) string {
@@ -135,8 +154,12 @@ func volcPlanQuotas(ctx context.Context) []SubscriptionQuota {
 		go func() {
 			defer wg.Done()
 			out[i] = volcPlanQuota(j.p.Via(ctx), j.p, j.action, j.plan, j.region)
+			if out[i].Error == "" {
+				// taken before keepReading can put an older card in its place
+				noteKeyAllowance(j.p, out[i].Windows, time.Now())
+			}
 			// a failed read shows what was last read, as a key's plan does
-			out[i] = keepReading(ctx, out[i], keyTag("volc "+j.action, j.p.AccessKeyID))
+			out[i] = keepReading(ctx, out[i], keyTag("volc "+j.action+" "+j.region, j.p.AccessKeyID))
 		}()
 	}
 	wg.Wait()

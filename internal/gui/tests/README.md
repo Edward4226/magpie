@@ -2422,12 +2422,14 @@ at another assets folder, to see it fail on the old code.
 
 `volc-access-key.test.cjs` covers #1427: an Ark provider's editor (saved or
 being added) asks for the account's AccessKey ID and Secret Access Key, which
-the Usage page reads the Coding or Agent Plan's windows with. The saved Secret
-is never in the page: only that one is saved, as the placeholder. Save posts
-the ID and a Secret only when a new one was typed; Remove posts
-`clearAccessKey`; an ID with no Secret is refused before anything is posted.
-A relay and DeepSeek have neither field and post none. Every string is in
-zh, zh-TW, ja and de. English and Chinese, Chromium and WebKit.
+the Usage page reads the Coding or Agent Plan's windows with. With one
+inference key in use, those windows also reach routing; with several, the
+editor says they stay on Usage. The saved Secret is never in the page: only
+that one is saved, as the placeholder. Save posts the ID and a Secret only
+when a new one was typed; Remove posts `clearAccessKey`; an ID with no Secret
+is refused before anything is posted. A relay and DeepSeek have neither field
+and post none. Every string is in zh, zh-TW, ja and de. English and Chinese,
+Chromium and WebKit.
 `TestProviderSaveKeepsVolcengineSecret` checks the server side.
 
 ```sh

@@ -4,16 +4,19 @@ package provider
 // account's: a sub2api key its owner gave a 5-hour, day or 7-day limit
 // tells what it has spent of each, as a plan bought with a key (Kimi
 // Code, the GLM Coding Plan, MiniMax's, OpenCode Go, Command Code's:
-// planquota.go) tells its plan's windows, and routing weighs and rests it
-// by them (#1016). They are read behind the request, never waited for, and read
-// again once a minute has passed; until the first reading is back, the
-// one last shown on the key's card stands in for it. A reading that finds
-// a window the key was out of no longer full — its limit raised in the
-// panel, or its usage reset — tells OnRenewed's hooks, as a Codex reset
-// spent does an account's, so what sat out for it comes back.
+// planquota.go) tells its plan's windows, and a one-key Volcengine Ark
+// provider's access key tells its account's (volcengine_usage.go). Routing
+// weighs and rests it by them (#1016). They are read behind the request,
+// never waited for, and read again once a minute has passed; until the
+// first reading is back, the one last shown on the key's card stands in
+// for it. A reading that finds a window the key was out of no longer full —
+// its limit raised in the panel, or its usage reset — tells OnRenewed's
+// hooks, as a Codex reset spent does an account's, so what sat out for it
+// comes back.
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -62,11 +65,22 @@ func readsKeyWindows(p Provider) bool {
 	if sub2APIKeyLimits(p) {
 		return true
 	}
+	if _, _, _, ok := volcKeyPlanOf(p); ok {
+		return true
+	}
 	_, ok := planQuotaSourceOf(p)
 	return ok
 }
 
-func keyAllowanceID(p Provider) string { return p.ID + "#" + keyID(p.Key) }
+func keyAllowanceID(p Provider) string {
+	id := p.ID + "#" + keyID(p.Key)
+	if action, _, region, ok := volcKeyPlanOf(p); ok {
+		// another access key, plan or region is another control-plane
+		// account to read, even when the inference key is unchanged
+		id += "#volc:" + strings.ToLower(action) + ":" + region + ":" + keyID(p.AccessKeyID)
+	}
+	return id
+}
 
 // KeyAllowanceID is what OnRenewed's hooks are told, as the user of agent
 // "", of a key whose own windows magpie reads; empty for any other.
@@ -183,6 +197,14 @@ func keyWindows(ctx context.Context, p Provider) (keyReading, error) {
 		r.plan, r.ws, _, err = planKeyWindows(q.Via(ctx), q, src, q.Key)
 		return r, err
 	}
+	if action, plan, region, ok := volcKeyPlanOf(q); ok && !sub2APIKeyLimits(q) {
+		card := volcPlanQuota(ctx, q, action, plan, region)
+		if card.Error != "" {
+			return r, errors.New(card.Error)
+		}
+		r.ws = card.Windows
+		return r, nil
+	}
 	var parts []BalancePart
 	r.balance, parts, r.split, r.ws, _, err = balanceRead(ctx, q)
 	r.parts = cardParts(parts)
@@ -194,6 +216,9 @@ func keyWindows(ctx context.Context, p Provider) (keyReading, error) {
 func keyCardTag(p Provider) string {
 	if _, ok := planQuotaSourceOf(p); ok && !sub2APIKeyLimits(p) {
 		return keyTag("plan", p.Key)
+	}
+	if action, _, region, ok := volcKeyPlanOf(p); ok {
+		return keyTag("volc "+action+" "+region, p.AccessKeyID)
 	}
 	return keyTag("balance", p.Key)
 }

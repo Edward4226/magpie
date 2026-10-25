@@ -57,7 +57,7 @@ function serve(lang, posts, fresh) {
 
 const strings = [
   "AccessKey ID", "Secret Access Key", "saved · paste a new one to replace it", "Remove",
-  "The plan's 5-hour, weekly and monthly windows are told only to the account's access key (Volcengine console → API Access Keys), not to the plan's API key. Give it here for the Usage page to show them; it is used for nothing else.",
+  "The plan's 5-hour, weekly and monthly windows are told only to the account's access key (Volcengine console → API Access Keys), not to the plan's API key. Give it here for the Usage page to show them. With one inference key on this provider, routing uses them too; with several it can't tell which key is on the plan, so they stay on Usage.",
   "Give the access key's Secret too",
 ];
 const words = {
