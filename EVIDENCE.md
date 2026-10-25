@@ -50,24 +50,40 @@ The gateway now has two hooks:
 - `Allowances` skips failed or windowless readings, retains the previous successful `seen` reading, and does not emit `OnStarted` for a failed read. A failed read therefore remains unknown, not "no window" or "recovered".
 - `readKeyAllowance` skips `keep` when the read fails, retaining the prior allowance, and emits neither renewal hook on that failure.
 
-Residual sibling defect in the key path:
+Sibling defect fixed during verification:
 
-- `readKeyAllowance` assigns `e.at = now` before calling `e.keep`.
-- `keep` then records `old, wasAt := e.a, e.at`, so `wasAt` is already the new read time rather than the previous successful read time.
-- A key whose reset elapsed between two successful reads therefore fails `startedAgain`'s `l.Resets.After(wasAt)` test and does not emit `OnStarted`.
-- A failure read also overwrites `e.at`, so that timestamp cannot safely serve as the last successful reading time for the next `startedAgain` comparison.
+- `readKeyAllowance` used `e.at` both as the last-read time and as the time from which `startedAgain` compared a reset. A failed read therefore replaced the prior successful reading time.
+- `keyAllowance` now keeps `aAt` for when the current allowance was successfully read and `at` for the latest read attempt, successful or not.
+- `keep` compares the supplied reading against `aAt` and updates `aAt` only when a successful reading is kept.
+- `noteKeyAllowance`, which records a card reading, updates both `aAt` and `at`.
 
-Temporary review probe (removed after the run):
+Permanent regression test:
 
 ```text
---- FAIL: TestReview2718KeyElapsedResetStartsAgain (0.40s)
-    review_2718_key_test.go:60: the reset passed since the last key reading: OnStarted was told []
-FAIL
-FAIL	github.com/yetone/magpie/internal/provider	2.315s
+TestKeyAllowanceElapsedResetStartsAgain
+```
+
+The test performs a successful reading, a failed reading, and a successful
+reading after the reset. It proves the failed reading does not move `aAt` and
+the final successful reading emits `OnStarted`.
+
+Observed red before applying the sibling fix:
+
+```text
+--- FAIL: TestKeyAllowanceElapsedResetStartsAgain
+    key_allowance_started_test.go:77: a failed reading moved the last successful reading
 FAIL
 ```
 
-This is directly in the new sibling path. It is recorded rather than changed because the requested scope allowed only minimal conflict fixes and no opportunistic production edits.
+Observed red under mutation, with `keep` reading `e.at` instead of `e.aAt`:
+
+```text
+--- FAIL: TestKeyAllowanceElapsedResetStartsAgain
+    key_allowance_started_test.go:90: the reset passed since the last successful reading: OnStarted was told nothing
+FAIL
+```
+
+The mutation was restored. The permanent test then passed.
 
 ## Red before green
 
@@ -138,6 +154,7 @@ ok  	github.com/yetone/magpie/internal/gateway	8.722s
 The run included:
 
 ```text
+TestKeyAllowanceElapsedResetStartsAgain
 TestReadingKeepsARefusalsRest
 TestAutoVisionKeepsOffARefusedAccount
 TestClaudeAccountBackOnceItsWindowRenews
@@ -256,8 +273,7 @@ baseline / not tried as an acceptance gate, not as a patch regression.
   no longer selects the resting account.
 - The author's patch applies cleanly to current main with identical patch-id
   and author attribution.
-- The patch is not fully stable across its key sibling path: elapsed-reset
-  propagation through `readKeyAllowance` loses the previous read timestamp and
-  `OnStarted` is not delivered. The focused provider/gateway target tests pass,
-  but this sibling defect needs a maintainer decision before accepting the
-  patch as complete.
+- Verification also found and fixed a sibling defect in `readKeyAllowance`:
+  elapsed-reset propagation now uses the last successful reading time rather
+  than the latest failed read, and the permanent regression test is red on the
+  old path and green on the completed patch.

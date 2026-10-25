@@ -29,7 +29,8 @@ var keyAllowances struct {
 
 type keyAllowance struct {
 	a       Allowance
-	at      time.Time // when read; zero to read again at the next ask
+	aAt     time.Time // when a was read, for a window that started again
+	at      time.Time // when last read, either way; zero to read again at the next ask
 	loading bool
 	// stale: made stale (StaleKeyAllowance) while a reading was out, which
 	// was asked before the key said it was out and is followed by another
@@ -170,9 +171,9 @@ func readKeyAllowance(p Provider, id string, gen int) {
 // by or a new, later cycle (what the vendor itself timed waits for,
 // #2718).
 func (e *keyAllowance) keep(a Allowance, share float64, now time.Time) (renewed, started bool) {
-	old, wasAt := e.a, e.at
+	old, wasAt := e.a, e.aAt
 	was := old.Full("", share, now)
-	e.a, e.at = a, now
+	e.a, e.aAt = a, now
 	if was.After(a.Full("", share, now)) {
 		renewed = true
 	}
@@ -243,6 +244,7 @@ func noteKeyAllowance(p Provider, ws []QuotaWindow, now time.Time) {
 		c.m[id] = e
 	}
 	renewed, started := e.keep(allowanceOf(ws, now), SpentShareOf(p.Routing), now)
+	e.at = now
 	c.Unlock()
 	if renewed {
 		tellRenewed("", id)
