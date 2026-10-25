@@ -262,11 +262,11 @@ func TestZenFreeSearchRounds(t *testing.T) {
 	}
 }
 
-// Since mid-October 2026 Zen's free tier answers at the inference API's
-// URL alone, and refuses bash or read offered with no parameters (c9cu on
+// Since mid-October 2026 Zen's free tier's Chat API asks for the OpenAI
+// path and refuses bash or read offered with no parameters (c9cu on
 // Discord: Muse Spark 1.3 free 403 FreeTierError again): a free model is
-// asked at /inference/v1 with stubs that take OpenCode's own parameters,
-// and a paid one stays at the provider's /zen/v1.
+// asked at /inference/openai/v1 with stubs that take OpenCode's own
+// parameters, and a paid one stays at the provider's /zen/v1.
 func TestZenFreeAtInferenceURL(t *testing.T) {
 	s, _ := zenServer(t, chatSSE("hi", "", ""))
 	var paths []string
@@ -282,7 +282,7 @@ func TestZenFreeAtInferenceURL(t *testing.T) {
 	})}
 	zenSend(t, s, "/v1/chat/completions", `{"model":"zen/mimo-v2.6-flash-free","messages":[{"role":"user","content":"hi"}]}`)
 	zenSend(t, s, "/v1/chat/completions", `{"model":"zen/kimi-k2.6","messages":[{"role":"user","content":"hi"}]}`)
-	if len(paths) != 2 || paths[0] != "opencode.ai/inference/v1/chat/completions" || paths[1] != "opencode.ai/zen/v1/chat/completions" {
+	if len(paths) != 2 || paths[0] != "opencode.ai/inference/openai/v1/chat/completions" || paths[1] != "opencode.ai/zen/v1/chat/completions" {
 		t.Fatalf("paths %v", paths)
 	}
 	tools, _ := sent[0]["tools"].([]any)

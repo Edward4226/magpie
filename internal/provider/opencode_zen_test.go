@@ -141,25 +141,38 @@ func TestZenAddKeyEmptyIsPublic(t *testing.T) {
 	}
 }
 
-// Zen's free tier is asked at the inference API's root, on every API's
-// URL Zen's own is saved with; Go's and other URLs are as they were.
+// Zen's free tier's Chat requests use the OpenAI path models.dev now gives;
+// its other API shapes, Go's, relays and URLs already at the inference API
+// are as they were.
 func TestOpenCodeFreeURL(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://opencode.ai/zen/v1":           "https://opencode.ai/inference/v1",
-		"https://opencode.ai/zen/v1/":          "https://opencode.ai/inference/v1/",
-		"https://opencode.ai/zen/v1/responses": "https://opencode.ai/inference/v1/responses",
-		"https://opencode.ai/zenith/v1":        "https://opencode.ai/zenith/v1",
-		"https://opencode.ai/zen":              "https://opencode.ai/inference",
-		"https://opencode.ai/inference/v1":     "https://opencode.ai/inference/v1",
-		"https://opencode.ai/zen/go/v1":        "https://opencode.ai/zen/go/v1",
-		"https://relay.test/zen/v1":            "https://relay.test/zen/v1",
-		"https://api.opencode.ai/zen/v1":       "https://api.opencode.ai/inference/v1",
+	for _, tc := range []struct {
+		name     string
+		api      Protocol
+		in, want string
+	}{
+		{"chat base", Chat, "https://opencode.ai/zen/v1", "https://opencode.ai/inference/openai/v1"},
+		{"chat base slash", Chat, "https://opencode.ai/zen/v1/", "https://opencode.ai/inference/openai/v1/"},
+		{"chat endpoint", Chat, "https://opencode.ai/zen/v1/chat/completions", "https://opencode.ai/inference/openai/v1/chat/completions"},
+		{"chat root", Chat, "https://opencode.ai/zen", "https://opencode.ai/inference/openai"},
+		{"responses base", Responses, "https://opencode.ai/zen/v1", "https://opencode.ai/inference/v1"},
+		{"responses endpoint", Responses, "https://opencode.ai/zen/v1/responses", "https://opencode.ai/inference/v1/responses"},
+		{"messages", Anthropic, "https://opencode.ai/zen/v1/messages", "https://opencode.ai/inference/v1/messages"},
+		{"gemini", Gemini, "https://opencode.ai/zen/v1/models/gemini-3:streamGenerateContent?alt=sse", "https://opencode.ai/inference/v1/models/gemini-3:streamGenerateContent?alt=sse"},
+		{"already openai", Chat, "https://opencode.ai/inference/openai/v1", "https://opencode.ai/inference/openai/v1"},
+		{"already inference", Responses, "https://opencode.ai/inference/v1/responses", "https://opencode.ai/inference/v1/responses"},
+		{"zenith", Chat, "https://opencode.ai/zenith/v1", "https://opencode.ai/zenith/v1"},
+		{"go", Chat, "https://opencode.ai/zen/go/v1", "https://opencode.ai/zen/go/v1"},
+		{"relay", Chat, "https://relay.test/zen/v1", "https://relay.test/zen/v1"},
+		{"api subdomain", Chat, "https://api.opencode.ai/zen/v1", "https://api.opencode.ai/inference/openai/v1"},
 	} {
-		if got := OpenCodeFreeURL(in); got != want {
-			t.Errorf("%s: %s, want %s", in, got, want)
+		if got := OpenCodeFreeURL(tc.in, tc.api); got != tc.want {
+			t.Errorf("%s: %s: %s, want %s", tc.name, tc.api, got, tc.want)
 		}
 	}
 	p, _ := FromPreset("opencode-zen")
+	if url, _ := tiny(p, Chat, "big-pickle"); url != "https://opencode.ai/inference/openai/v1/chat/completions" {
+		t.Fatalf("chat probe %s", url)
+	}
 	if url, _ := tiny(p, Responses, "muse-spark-1.3-contributor-free"); url != "https://opencode.ai/inference/v1/responses" {
 		t.Fatalf("probe %s", url)
 	}
@@ -172,7 +185,7 @@ func TestOpenCodeFreeURL(t *testing.T) {
 // (testdata/zen_public_models.json, byte for byte) beside models.dev's
 // opencode entries for those ids from the same day (zen_catalog.json),
 // and answers a probe as Zen answers public: 200 for a free model at the
-// inference API on the API the catalog names for it, 401 for any other.
+// inference API's path for the API the catalog names, 401 for any other.
 // It returns the probes asked, as "path model".
 func zenFake(t *testing.T) func() []string {
 	t.Helper()
@@ -208,7 +221,7 @@ func zenFake(t *testing.T) func() []string {
 		if api == "" {
 			api = "chat"
 		}
-		path := map[string]string{"chat": "/inference/v1/chat/completions", "responses": "/inference/v1/responses", "anthropic": "/inference/messages"}[api]
+		path := map[string]string{"chat": "/inference/openai/v1/chat/completions", "responses": "/inference/v1/responses", "anthropic": "/inference/messages"}[api]
 		if !strings.HasSuffix(model, "-free") && model != "big-pickle" || r.URL.Path != path {
 			w.WriteHeader(http.StatusUnauthorized)
 			return

@@ -130,13 +130,11 @@ var OpenCodeToolSchemas = map[string]string{
 
 // OpenCodeFreeURL is where a request to Zen's free tier goes, given the
 // URL it would go to at Zen (https://opencode.ai/zen/v1/…, or under the
-// root for Messages): the same path under the inference API's root, which
-// models.dev gives OpenCode as Zen's URL since October 2026 and OpenCode
-// 1.19.0 asks. Since mid-October 2026 Zen answers a free model at /zen/v1
-// with 403 FreeTierError even when the request is OpenCode's own, word for
-// word, and the same request at /inference/v1 with 200. Any other URL, Go's
-// (/zen/go) among them, is u.
-func OpenCodeFreeURL(u string) string {
+// root for Messages). API is the upstream shape the request was built for.
+// Chat alone moved to /inference/openai/v1, matching the catalog's OpenAI
+// URL; the other API shapes keep the inference path they used before. Any
+// other URL, Go's (/zen/go) among them, is u.
+func OpenCodeFreeURL(u string, api Protocol) string {
 	pu, err := url.Parse(strings.TrimSpace(u))
 	if err != nil || pu.Scheme == "" {
 		return u
@@ -148,7 +146,11 @@ func OpenCodeFreeURL(u string) string {
 	if !ok || rest != "" && rest[0] != '/' || rest == "/go" || strings.HasPrefix(rest, "/go/") {
 		return u
 	}
-	pu.Path = "/inference" + rest
+	prefix := "/inference"
+	if api == Chat {
+		prefix = "/inference/openai"
+	}
+	pu.Path = prefix + rest
 	return pu.String()
 }
 
