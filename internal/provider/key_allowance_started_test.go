@@ -12,7 +12,7 @@ import (
 // on the successful read after it, even when a failed read came between.
 func TestKeyAllowanceElapsedResetStartsAgain(t *testing.T) {
 	keyLimitsHome(t)
-	reset := time.Now().Add(1500 * time.Millisecond).Truncate(time.Second)
+	reset := time.Now().Add(time.Hour).Truncate(time.Second)
 	full := weekUsed(t, "800", reset)
 	var down atomic.Bool
 	srv, asked := sub2apiServer(t, func() ([]byte, int) {
@@ -53,11 +53,17 @@ func TestKeyAllowanceElapsedResetStartsAgain(t *testing.T) {
 		keyAllowances.Unlock()
 		readKeyAllowance(p, id, gen)
 	}
-	KeyAllowance(p)
-	waitRead(t)
+	// Seed a successful reading whose reset passed before the next
+	// successful reading, without making the test wait for wall time.
+	wasAt := time.Now().Add(-2 * time.Hour)
+	passed := wasAt.Add(time.Hour)
+	noteKeyAllowance(p, []QuotaWindow{{
+		Name: "7 days", Span: 7 * 24 * time.Hour, Used: 100,
+		ResetsAt: &passed, Amount: 800, Limit: 800, Unit: "USD",
+	}}, wasAt)
 	keyAllowances.Lock()
 	first := keyAllowances.m[id]
-	if first == nil || first.aAt.IsZero() {
+	if first == nil || !first.aAt.Equal(wasAt) {
 		t.Fatalf("the first successful reading was not kept: %+v", first)
 	}
 	firstAt := first.aAt
@@ -77,9 +83,6 @@ func TestKeyAllowanceElapsedResetStartsAgain(t *testing.T) {
 		t.Fatalf("a failed reading moved the last successful reading: %+v", failed)
 	}
 	keyAllowances.Unlock()
-	if wait := time.Until(reset) + 50*time.Millisecond; wait > 0 {
-		time.Sleep(wait)
-	}
 	read()
 	select {
 	case got := <-started:
@@ -89,7 +92,7 @@ func TestKeyAllowanceElapsedResetStartsAgain(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the reset passed since the last successful reading: OnStarted was told nothing")
 	}
-	if n := asked.Load(); n != 3 {
-		t.Fatalf("asked %d times, want the successful, failed and elapsed-reset readings", n)
+	if n := asked.Load(); n != 2 {
+		t.Fatalf("asked %d times, want the failed and elapsed-reset readings", n)
 	}
 }

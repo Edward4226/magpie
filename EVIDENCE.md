@@ -63,15 +63,16 @@ Permanent regression test:
 TestKeyAllowanceElapsedResetStartsAgain
 ```
 
-The test performs a successful reading, a failed reading, and a successful
-reading after the reset. It proves the failed reading does not move `aAt` and
-the final successful reading emits `OnStarted`.
+The test seeds a successful reading whose reset is already older than the
+next success, performs a failed read, then a successful read. It proves the
+failed read does not move `aAt` and the final successful read emits
+`OnStarted`, without depending on wall-clock sleeps.
 
 Observed red before applying the sibling fix:
 
 ```text
 --- FAIL: TestKeyAllowanceElapsedResetStartsAgain
-    key_allowance_started_test.go:77: a failed reading moved the last successful reading
+    a failed reading moved the last successful reading
 FAIL
 ```
 
@@ -79,7 +80,7 @@ Observed red under mutation, with `keep` reading `e.at` instead of `e.aAt`:
 
 ```text
 --- FAIL: TestKeyAllowanceElapsedResetStartsAgain
-    key_allowance_started_test.go:90: the reset passed since the last successful reading: OnStarted was told nothing
+    the reset passed since the last successful reading: OnStarted was told nothing
 FAIL
 ```
 
