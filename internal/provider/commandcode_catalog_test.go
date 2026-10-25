@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+
+	"github.com/yetone/magpie/internal/catalog"
 )
 
 // cmdPlainListReply is what api.commandcode.ai/provider/v1/models answers:
@@ -37,6 +39,7 @@ const (
 type cmdAPIStub struct {
 	plan, credits                      string
 	planDown, creditsDown, catalogDown bool
+	anthropicDown                      bool
 }
 
 func (s *cmdAPIStub) start(t *testing.T) {
@@ -50,6 +53,12 @@ func (s *cmdAPIStub) start(t *testing.T) {
 					return
 				}
 				w.Write([]byte(cmdClientListReply))
+				return
+			}
+			w.Write([]byte(cmdPlainListReply))
+		case "/anthropic/models", "/anthropic/v1/models", "/v1/models", "/models":
+			if s.anthropicDown && r.Header.Get("anthropic-version") != "" {
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 			w.Write([]byte(cmdPlainListReply))
@@ -165,5 +174,83 @@ func TestCommandCodeModelsStayWhenTheCatalogCannotBeRead(t *testing.T) {
 
 	if got := cmdAPIModels(t, "cmd-1417-nocatalog"); len(got) != 4 {
 		t.Errorf("catalog unreadable: %v, want all four", got)
+	}
+}
+
+// The endpoint parts saved beside a filtered list are endpoint metadata,
+// not another model list. They may name a model the plan leaves out, but
+// that model must not come back through Available, Exposed or the protocol
+// lookup, including after a later fetch has to keep the missing endpoint's
+// part. A plan read that fails still leaves the whole vendor list alone.
+func TestCommandCodePlanFilterStaysOnUserSurfacesWhenSidesKeepMore(t *testing.T) {
+	isolateFetchHome(t)
+	stub := &cmdAPIStub{plan: cmdGoatPlan, credits: cmdNoCredits}
+	stub.start(t)
+
+	p := Provider{
+		ID:        "commandcode",
+		Key:       "cmd-1417-sides",
+		Chat:      "https://api.commandcode.ai/provider/v1",
+		Responses: "https://api.commandcode.ai/provider/v1",
+		Anthropic: "https://api.commandcode.ai/anthropic",
+	}
+	want := []string{"deepseek/deepseek-v4.1-flash", "claude-sonnet-5-5"}
+	excluded := []string{"claude-sonnet-5", "gpt-6.1-sol"}
+	checkSurfaces := func(when string) {
+		t.Helper()
+		if got := modelIDs(p.Available()); slices.ContainsFunc(excluded, func(id string) bool { return slices.Contains(got, id) }) {
+			t.Errorf("%s: Available brought back a plan-excluded model: %v", when, got)
+		}
+		if got := modelIDs(p.Exposed()); slices.ContainsFunc(excluded, func(id string) bool { return slices.Contains(got, id) }) {
+			t.Errorf("%s: Exposed brought back a plan-excluded model: %v", when, got)
+		}
+		for _, id := range excluded {
+			if apis := p.ListedAPIs(id); len(apis) != 0 {
+				t.Errorf("%s: ListedAPIs(%s) = %v, want no side-derived route", when, id, apis)
+			}
+		}
+	}
+
+	if got, err := p.Fetch(context.Background()); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	} else if modelIDs(got) == nil || !slices.Equal(modelIDs(got), want) {
+		t.Fatalf("first fetch: %v, want %v", modelIDs(got), want)
+	}
+	sides, last, ok := catalog.LiveSplit(p.ID)
+	if !ok || len(sides) != 2 {
+		t.Fatalf("saved sides: %v, list %v, ok %v", sides, modelIDs(last), ok)
+	}
+	for _, id := range excluded {
+		kept := false
+		for _, ms := range sides {
+			kept = kept || slices.Contains(modelIDs(ms), id)
+		}
+		if !kept {
+			t.Fatalf("the fixture did not preserve %s in a saved side: %v", id, sides)
+		}
+	}
+	t.Log("saved sides still name plan-excluded models; user surfaces must not")
+	checkSurfaces("after the first fetch")
+
+	// The Anthropic endpoint fails next time. Its own saved side is kept so
+	// a model it alone lists is not dropped, which also keeps the excluded
+	// models in that metadata; the plan filter still has the last word.
+	stub.anthropicDown = true
+	if got, err := p.Fetch(context.Background()); err != nil {
+		t.Fatalf("fetch with the Anthropic endpoint down: %v", err)
+	} else if !slices.Equal(modelIDs(got), want) {
+		t.Errorf("fetch with the Anthropic endpoint down: %v, want %v", modelIDs(got), want)
+	}
+	checkSurfaces("after keeping a failed endpoint's side")
+
+	// A new key misses the plan cache. When the plan cannot be read, the
+	// whole vendor list is the only safe answer.
+	stub.anthropicDown = false
+	stub.planDown = true
+	p.Key = "cmd-1417-sides-noplan"
+	if got, err := p.Fetch(context.Background()); err != nil {
+		t.Fatalf("fetch with the plan unreadable: %v", err)
+	} else if ids := modelIDs(got); len(ids) != 4 || !slices.Contains(ids, "claude-sonnet-5") || !slices.Contains(ids, "gpt-6.1-sol") {
+		t.Errorf("plan unreadable: %v, want all four", ids)
 	}
 }
