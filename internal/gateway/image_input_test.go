@@ -159,8 +159,8 @@ func TestTextOnlyModelOmitsToolImages(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, endpoint, body string
 	}{
-		{"responses-current", "/v1/responses", "responses", `{"model":"probe/text","input":[{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"screenshot"},{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]},{"role":"user","content":[{"type":"input_text","text":"answer"}]}]}`},
-		{"responses-last", "/v1/responses", "responses", `{"model":"probe/text","input":[{"role":"user","content":[{"type":"input_text","text":"read"}]},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]}]}`},
+		{"responses-current", "/v1/responses", "responses", `{"model":"probe/text","input":[{"type":"function_call","call_id":"call_1","name":"view_image","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"screenshot"},{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]},{"role":"user","content":[{"type":"input_text","text":"answer"}]}]}`},
+		{"responses-last", "/v1/responses", "responses", `{"model":"probe/text","input":[{"role":"user","content":[{"type":"input_text","text":"read"}]},{"type":"function_call","call_id":"call_1","name":"view_image","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]}]}`},
 		{"responses-to-chat", "/v1/responses", "chat", `{"model":"probe/text","input":[{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"screenshot"},{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]},{"role":"user","content":[{"type":"input_text","text":"answer"}]}]}`},
 		{"chat-tool", "/v1/chat/completions", "chat", `{"model":"probe/text","messages":[{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screenshot"},{"type":"image_url","image_url":{"url":"data:image/png;base64,aGVsbG8="}}]}]}`},
 	} {

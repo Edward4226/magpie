@@ -115,7 +115,12 @@ func TestStandaloneToolOutputResponsesRoutes(t *testing.T) {
 }
 
 func TestOrphanToolOutputsContentAndNoops(t *testing.T) {
-	for _, body := range []string{`not json`, `{}`, `{"input":"hello"}`, `{"input":[{"type":"function_call_output","call_id":"paired","output":"ok"}]}`, `{"input":[{"role":"user","content":"ordinary"}]}`} {
+	for _, body := range []string{
+		`not json`, `{}`, `{"input":"hello"}`,
+		`{"input":[{"type":"function_call","call_id":"paired","name":"echo","arguments":"{}"},{"type":"function_call_output","call_id":"paired","output":"ok"}]}`,
+		`{"input":[{"role":"user","content":"ordinary"}]}`,
+		`{"previous_response_id":"resp_1","input":[{"type":"function_call_output","call_id":"call_old","output":"late result"}]}`,
+	} {
 		if got := orphanedToolOutputs([]byte(body)); string(got) != body {
 			t.Fatalf("unchanged input rewritten: %s", got)
 		}
@@ -143,6 +148,66 @@ func TestOrphanToolOutputsContentAndNoops(t *testing.T) {
 	}
 	if !bytes.Equal(orphanedToolOutputs(fixed), fixed) {
 		t.Fatal("normalization is not idempotent")
+	}
+}
+
+// #2790: Codex's remote compaction sends its whole history with a
+// compaction_trigger. A function or custom tool output retained after its
+// call was compacted away still names that call, and Command Code turns the
+// request into Chat and refuses the unmatched tool message. The call cannot
+// be in an earlier response because this request has no
+// previous_response_id.
+func TestResponsesRelayOrphanedToolOutputWithID(t *testing.T) {
+	const refusal = `{"error":{"message":"Messages with role 'tool' must be a response to a preceding message with 'tool_calls'","type":"invalid_request_error"}}`
+	f := &fake{
+		t: t,
+		reply: sse(
+			`data: {"type":"response.created","response":{"id":"resp_r1","status":"in_progress","output":[]}}`,
+			`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"SUMMARY"}]}}`,
+			`data: {"type":"response.completed","response":{"id":"resp_r1","status":"completed","output":[]}}`),
+		refuse: func(body []byte) (int, string) {
+			var q struct {
+				Input []struct {
+					Type   string `json:"type"`
+					CallID string `json:"call_id"`
+				} `json:"input"`
+			}
+			if err := json.Unmarshal(body, &q); err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]bool{}
+			for _, it := range q.Input {
+				switch it.Type {
+				case "function_call", "custom_tool_call", "tool_search_call":
+					seen[it.CallID] = true
+				case "function_call_output", "custom_tool_call_output":
+					if !seen[it.CallID] {
+						return http.StatusBadRequest, refusal
+					}
+				}
+			}
+			return 0, ""
+		},
+	}
+	setup(t, provider.Responses, f)
+	body := `{"model":"fake/m1","stream":true,"input":[` +
+		`{"type":"message","role":"user","content":"keep going"},` +
+		`{"type":"function_call","call_id":"call_kept","name":"shell","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_kept","output":"kept"},` +
+		`{"type":"function_call_output","call_id":"call_compacted","output":"the result that outlived its call"},` +
+		`{"type":"custom_tool_call_output","call_id":"call_custom_compacted","output":"the custom result that outlived its call"},` +
+		`{"type":"compaction_trigger"}]}`
+	if code, out := post(t, "/v1/responses", body); code != http.StatusOK {
+		t.Fatalf("status %d: %s; sent %s", code, out, f.got)
+	}
+	in := inputOf(t, f.got)
+	if len(in) != 6 || in[3]["type"] != "message" || in[3]["role"] != "user" ||
+		in[4]["type"] != "message" || in[4]["role"] != "user" {
+		t.Fatalf("the orphaned result was not kept as user context: %s", f.got)
+	}
+	if !strings.Contains(string(f.got), "the result that outlived its call") ||
+		!strings.Contains(string(f.got), "the custom result that outlived its call") {
+		t.Fatalf("an orphaned result lost its content: %s", f.got)
 	}
 }
 

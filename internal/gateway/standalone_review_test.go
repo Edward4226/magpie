@@ -171,7 +171,11 @@ func TestStandaloneNativeAccounts(t *testing.T) {
 
 func TestStandalonePlainEncoding(t *testing.T) {
 	for _, kind := range []string{"function_call_output", "custom_tool_call_output"} {
-		for _, body := range []string{`{ "z": "<keep>&", "input": [ { "role": "user", "content": "hi" } ], "a": 1 }`, fmt.Sprintf(`{ "input": [{"type":%q,"call_id":"A","output":"<paired>"}], "instructions":"<keep>&" }`, kind)} {
+		pairedCall := `{"type":"function_call","call_id":"A","name":"send_message_to_thread","arguments":"{}"}`
+		if kind == "custom_tool_call_output" {
+			pairedCall = `{"type":"custom_tool_call","call_id":"A","name":"send_message_to_thread","input":"{}"}`
+		}
+		for _, body := range []string{`{ "z": "<keep>&", "input": [ { "role": "user", "content": "hi" } ], "a": 1 }`, fmt.Sprintf(`{ "input": [%s,{"type":%q,"call_id":"A","output":"<paired>"}], "instructions":"<keep>&" }`, pairedCall, kind)} {
 			if got := orphanedToolOutputs([]byte(body)); string(got) != body {
 				t.Fatalf("no-op bytes changed: %s", got)
 			}

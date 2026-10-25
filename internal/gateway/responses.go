@@ -691,9 +691,12 @@ func joinToolRuns(body []byte) []byte {
 	return encoded
 }
 
-// orphanedToolOutputs turns a tool result with no call ID into a user message.
-// Codex uses standalone outputs for cross-thread notifications. Backends
-// requiring paired outputs still need the delivered text, without a fake call ID.
+// orphanedToolOutputs turns a tool result whose call isn't in the request
+// into a user message. Codex uses standalone outputs for cross-thread
+// notifications and can keep a result after compaction removes its call.
+// Backends requiring paired outputs still need the delivered text, without
+// a fake call ID. A result naming a call from an earlier response
+// (previous_response_id) stays as it is.
 func orphanedToolOutputs(body []byte) []byte {
 	var q map[string]json.RawMessage
 	if decodeJSONView(body, &q) != nil {
@@ -702,6 +705,26 @@ func orphanedToolOutputs(body []byte) []byte {
 	input, isList := inputList(q["input"])
 	if !isList {
 		return body
+	}
+	previous := false
+	if raw, ok := q["previous_response_id"]; ok {
+		var id string
+		if decodeJSONView(raw, &id) != nil {
+			// An unreadable pointer is unknown, never "no earlier response".
+			previous = strings.TrimSpace(string(raw)) != "null"
+		} else {
+			previous = id != ""
+		}
+	}
+	calls := map[string]bool{}
+	for _, raw := range input {
+		var item struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+		}
+		if decodeJSONView(raw, &item) == nil && toolCallItem(item.Type) && item.CallID != "" {
+			calls[item.CallID] = true
+		}
 	}
 	changed := false
 	out := make([]json.RawMessage, 0, len(input))
@@ -724,7 +747,8 @@ func orphanedToolOutputs(body []byte) []byte {
 			continue
 		}
 		isOutput := item.Type == "function_call_output" || item.Type == "custom_tool_call_output"
-		if !isOutput || item.CallID != "" {
+		orphaned := item.CallID == "" || !previous && !calls[item.CallID]
+		if !isOutput || !orphaned {
 			switch item.Type {
 			case "function_call", "custom_tool_call", "tool_search_call":
 				if hadResults {
