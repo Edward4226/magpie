@@ -2,7 +2,8 @@
 
 ## Baseline
 
-- Base commit: `3b717d5e0d62a73af365a84ace0eed295809918a`
+- Original base commit: `3b717d5e0d62a73af365a84ace0eed295809918a`
+- Final rebased base: `7499ebb5ef08704d663ec70c6be45884197cc03f`
 - Worktree: `C:\Users\16382\Documents\ChatGPT\magpie\worktrees\issue-3491-path-20261026`
 - Detached HEAD at the base commit.
 - All commands were run from PowerShell with a temporary `HOME`; `GOPATH`,
