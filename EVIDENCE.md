@@ -3,7 +3,9 @@
 ## Base
 
 - Worktree: `C:\Users\16382\Documents\ChatGPT\magpie\worktrees\issue-ark-plan-routing-20261026`
-- Base: `3b717d5e0d62a73af365a84ace0eed295809918a` (`v0.1.1554`)
+- Original base: `3b717d5e0d62a73af365a84ace0eed295809918a` (`v0.1.1554`)
+- Final rebased base: `7499ebb5ef08704d663ec70c6be45884197cc03f`
+- Rebased patch commit: `fea3bd08`
 - Base is detached. No issue comment, push, PR, or close was attempted.
 - The live Magpie process PID 3425 was not used. Real Ark credentials and the
   live Magpie instance were not used.
