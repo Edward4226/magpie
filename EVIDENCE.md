@@ -3,10 +3,11 @@
 ## Scope and replay
 
 - Worktree: `C:\Users\16382\Documents\ChatGPT\magpie\worktrees\issue-1417-residual-20261026`
-- Base: `3b717d5e0d62a73af365a84ace0eed295809918a` (latest upstream `main` supplied for this task)
+- Original base: `3b717d5e0d62a73af365a84ace0eed295809918a`
+- Final rebased base: `7499ebb5ef08704d663ec70c6be45884197cc03f` (current upstream `main`)
 - Source patch: `20c79691dee427fe25d914c3e0dd8cd6bd279de8`
 - The worktree is detached.
-- `git cherry-pick 20c79691dee427fe25d914c3e0dd8cd6bd279de8` completed with no conflicts and created `5b158e248aeb60ddf8d3a6619334fd95b4fdf732`.
+- `git cherry-pick 20c79691dee427fe25d914c3e0dd8cd6bd279de8` applied without conflicts. After rebasing onto current `main`, the source commit is `5cca6a16` and the evidence commit is `7cc98051`.
 - The replayed commit kept the same subject and changed:
   - `internal/provider/commandcode_catalog.go`
   - `internal/provider/commandcode_catalog_test.go`
@@ -171,7 +172,7 @@ TestClaudeMemRunsFromTheCgroup, stuck in claude_room.go readLimit.
 
 ## Final state
 
-- The replay commit is `5b158e248aeb60ddf8d3a6619334fd95b4fdf732`.
+- The replay commit after the final rebase is `5cca6a16`; the final evidence commit is `7cc98051`.
 - This evidence is committed with the two test files. The final HEAD is the
   commit containing this file (`git rev-parse HEAD`).
 - No production source change was needed for the residual `sides` question.
