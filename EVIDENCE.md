@@ -3,10 +3,11 @@
 ## Base and patch
 
 - Worktree: `C:\Users\16382\Documents\ChatGPT\magpie\worktrees\verify-2718-latest-20261026`
-- Base: `3b717d5e0d62a73af365a84ace0eed295809918a` (upstream main; author yetone)
+- Original verification base: `3b717d5e0d62a73af365a84ace0eed295809918a`.
+- Final rebased base: `7499ebb5ef08704d663ec70c6be45884197cc03f` (current upstream `main`).
 - Source ref: `refs/remotes/ggbdpq/hunt57-d-rest-paths`
 - Source commit: `c0edbe7efef6f701cad85ddef99cd8b8f720db29`, author `ggbdpq <ggbdpq@gmail.com>`, parent `39fed471cc55ad8147fa8eb2edcfb758edae0d77`
-- Replayed commit: `5da3822525b6a9c703af3ad47fbe90e0384aa2ad`, author `ggbdpq <ggbdpq@gmail.com>`, committer Edward4226
+- Replayed source commit after the final rebase: `137d1b8a`, author `ggbdpq <ggbdpq@gmail.com>`, committer Edward4226.
 - Replay had no conflicts. The original and replayed patches have the same stable patch-id: `26639f5f9eaaac1760b76656c852b50d5ea2a831`.
 - The source commit message, author identity, `Fixes #2718`, and co-author trailer were retained. No issue comment, push, PR, or issue close was made.
 
@@ -88,7 +89,7 @@ The mutation was restored. The permanent test then passed.
 
 ## Red before green
 
-Old `3b717d5e` with only the new gateway tests present, under an isolated HOME:
+Original base `3b717d5e` with only the new gateway tests present, under an isolated HOME:
 
 ```text
 TestReadingKeepsARefusalsRest:
