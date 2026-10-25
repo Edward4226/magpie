@@ -113,12 +113,14 @@ func TestCodexCompactCutSummaryFailsOver(t *testing.T) {
 	}
 }
 
-// With nobody left, a cut summary is no summary: Codex is told why, and
-// not handed the words before the cut as the conversation's summary.
-func TestCodexCompactCutSummaryIsNoSummary(t *testing.T) {
-	for name, cut := range cutReplies(provider.Responses) {
+// With nobody left, a summary failed halfway or ended incomplete is no
+// summary: Codex is told why, and not handed the words before the failure
+// as the conversation's summary.
+func TestCodexCompactFailedSummaryIsNoSummary(t *testing.T) {
+	replies := cutReplies(provider.Responses)
+	for _, name := range []string{"quota halfway", "incomplete"} {
 		t.Run(name, func(t *testing.T) {
-			f := &fake{t: t, reply: cut}
+			f := &fake{t: t, reply: replies[name]}
 			setup(t, provider.Responses, f)
 			code, body := codexPost(t, compact404Request)
 			if code < 400 || strings.Contains(body, magpieCompaction) {
@@ -128,12 +130,64 @@ func TestCodexCompactCutSummaryIsNoSummary(t *testing.T) {
 	}
 }
 
+// #3526: every candidate ended before its summary was complete. The cut
+// words are not a summary, but with nobody left to fail over to, the
+// conversation still gets magpie's local handoff instead of a 502 that
+// Codex retries three times and then stops on.
+func TestCodexCompactCutSummaryCompactsLocally(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		f    *fake
+	}{
+		{"stream ends", &fake{t: t, reply: cutReplies(provider.Responses)["cut"]}},
+		{"stream error", &fake{t: t, reply: sse(`data: {"type":"error","message":"fake: ` + errEndedShort.Error() + `"}`)}},
+		{"HTTP 502", &fake{t: t, code: 502, ctype: "application/json", reply: `{"error":{"message":"fake: ` + errEndedShort.Error() + `"}}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := tc.f
+			setup(t, provider.Responses, f)
+			code, body := codexPost(t, compact404Request)
+			if code != 200 {
+				t.Fatalf("%d %s", code, body)
+			}
+			got := compactedText(t, body)
+			for _, want := range []string{"fix the login bug", "now add a test", "I fixed main.go", errEndedShort.Error()} {
+				if !strings.Contains(got, want) {
+					t.Errorf("local summary lacks %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, "PARTIAL summary of") {
+				t.Errorf("cut words were taken as the summary:\n%s", got)
+			}
+			if f.calls != 1+lastRetries {
+				t.Errorf("provider asked %d times, want the last candidate's %d tries and no plain-text request", f.calls, 1+lastRetries)
+			}
+		})
+	}
+}
+
+// A 502 that mentions a cut in some other words is still the provider's
+// failure: the local handoff is only for a reply that ended on the cut
+// itself.
+func TestCodexCompactOther502IsNoSummary(t *testing.T) {
+	f := &fake{t: t, code: 502, ctype: "application/json",
+		reply: `{"error":{"message":"fake: ` + errEndedShort.Error() + `; retry later"}}`}
+	setup(t, provider.Responses, f)
+	code, body := codexPost(t, compact404Request)
+	if code != 502 || strings.Contains(body, magpieCompaction) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if f.calls != 1+lastRetries {
+		t.Errorf("provider asked %d times, want %d", f.calls, 1+lastRetries)
+	}
+}
+
 // One conversation's compaction that fails compactFailsMost times in a
 // row is answered at once after, with a 400 Codex doesn't ask again on,
 // no model asked; another conversation's still is, and one that worked
 // clears the count.
 func TestCodexCompactKeepsFailingIsHeld(t *testing.T) {
-	f := &fake{t: t, reply: cutReplies(provider.Responses)["cut"]}
+	f := &fake{t: t, reply: cutReplies(provider.Responses)["incomplete"]}
 	setup(t, provider.Responses, f)
 	s := New()
 	for i := range compactFailsMost {
@@ -155,7 +209,7 @@ func TestCodexCompactKeepsFailingIsHeld(t *testing.T) {
 
 	// a summary that came clears it
 	s2 := New()
-	f.reply = cutReplies(provider.Responses)["cut"]
+	f.reply = cutReplies(provider.Responses)["incomplete"]
 	for range compactFailsMost - 1 {
 		codexPostTo(s2, codexCompactOf("fake/m1", "thread-3"))
 	}
@@ -163,7 +217,7 @@ func TestCodexCompactKeepsFailingIsHeld(t *testing.T) {
 	if rec := codexPostTo(s2, codexCompactOf("fake/m1", "thread-3")); rec.Code != 200 {
 		t.Fatalf("whole: %d %s", rec.Code, rec.Body)
 	}
-	f.reply = cutReplies(provider.Responses)["cut"]
+	f.reply = cutReplies(provider.Responses)["incomplete"]
 	codexPostTo(s2, codexCompactOf("fake/m1", "thread-3"))
 	if rec := codexPostTo(s2, codexCompactOf("fake/m1", "thread-3")); rec.Code == 400 {
 		t.Errorf("held after a summary came: %s", rec.Body)

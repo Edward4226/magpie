@@ -2625,8 +2625,10 @@ func userMessage(text string) map[string]any { return codexsummary.UserMessage(t
 // The summary is asked for whole (askWhole): a reply that breaks off, or
 // ends incomplete, is a failure the next account or member answers, as
 // one that fails before it begins, and is never taken for the summary;
-// when none is left Codex is told so. One conversation's compaction that
-// keeps failing stops being asked for a while (compactFails, #2274).
+// when none is left, a cut becomes magpie's local handoff, and one that
+// failed halfway or ended incomplete is told to Codex as no summary. One
+// conversation's compaction that keeps failing stops being asked for a
+// while (compactFails, #2274).
 func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byte) {
 	key, model := compactKey(body), modelOf(body)
 	if msg, held := s.compactFails.held(key, model); held {
@@ -2643,9 +2645,15 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 		rec := &recorder{header: http.Header{}, status: 200}
 		s.serve(rec, r, provider.Responses, b)
 		if rec.status >= 400 {
+			if summaryEndedShort(rec) {
+				return rec, compactResult{}, errEndedShort
+			}
 			return rec, compactResult{}, nil
 		}
 		res, err := compactReply(rec.body.Bytes())
+		if replyEndedShort(err) {
+			err = errEndedShort
+		}
 		if t := bytes.TrimSpace(rec.body.Bytes()); err == nil && res.Status == "" && (len(t) == 0 || t[0] != '{') {
 			// a stream with no response.completed stopped before its end:
 			// what it had said is no summary (#2274)
@@ -2655,7 +2663,12 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 	}
 	rec, res, err := ask(body)
 	local := ""
-	if first := rec.status; first == http.StatusNotFound || itemNotFound(rec) || upstreamFailed(rec) || protectionRefused(first, rec.body.Bytes()) ||
+	if errors.Is(err, errEndedShort) {
+		who, _ := compactFailure(body, rec)
+		log.Printf("codex compaction: %s ended before its summary was complete; compacting locally", who)
+		local = localSummary(body, who+": "+errEndedShort.Error())
+		rec, res, err = &recorder{header: http.Header{}, status: 200}, compactResult{}, nil
+	} else if first := rec.status; first == http.StatusNotFound || itemNotFound(rec) || upstreamFailed(rec) || protectionRefused(first, rec.body.Bytes()) ||
 		err != nil && protectionWords.MatchString(err.Error()) {
 		who, msg := compactFailure(body, rec)
 		if err != nil {
@@ -2761,6 +2774,20 @@ func upstreamFailed(rec *recorder) bool {
 	return rec.status >= 400 && rec.status < 500 && rec.status != http.StatusUnauthorized &&
 		rec.status != http.StatusForbidden && rec.status != http.StatusTooManyRequests &&
 		upstreamFailedWords.Match(rec.body.Bytes())
+}
+
+// summaryEndedShort is the 502 serve returns when a whole summary's
+// stream ended before its last event and no candidate was left to answer.
+// It is not any other 502: the words are the cut's own (#3526).
+func summaryEndedShort(rec *recorder) bool {
+	return rec.status == http.StatusBadGateway &&
+		strings.HasSuffix(provider.APIError(rec.body.Bytes(), ""), errEndedShort.Error())
+}
+
+// replyEndedShort is a stream's own error saying it ended before its last
+// event, after its provider's prefix.
+func replyEndedShort(err error) bool {
+	return err != nil && strings.HasSuffix(err.Error(), errEndedShort.Error())
 }
 
 var upstreamFailedWords = regexp.MustCompile(`(?i)upstream request failed`)
