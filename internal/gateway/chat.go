@@ -258,11 +258,15 @@ var failedAsText = map[string]bool{"devin": true, "qoder": true, "qoder-cn": tru
 // chatReplaysReasoning is whether a Chat upstream wants a turn's reasoning
 // back in reasoning_content: DeepSeek's models wherever they are served
 // (#388), the model named as the provider names it (OpenCode Go's
-// deepseek-v4.1-flash, whose host doesn't say so), and Command Code's
+// deepseek-v4.1-flash, whose host doesn't say so), and Command Code — its
 // plugin, which replays it for a Go key as the built-in did to
-// /alpha/generate.
+// /alpha/generate, and the built-in's own host now too: the stealth and
+// reflection models refuse a replayed assistant turn without it
+// ("Missing required parameter: 'messages[1].reasoning_content'",
+// #2741), the first turn 200 and every turn after 400.
 func chatReplaysReasoning(host, model string) bool {
-	return strings.Contains(host, "deepseek") || strings.Contains(strings.ToLower(model), "deepseek") || host == provider.CommandCodePlanID
+	return strings.Contains(host, "deepseek") || strings.Contains(strings.ToLower(model), "deepseek") ||
+		host == provider.CommandCodePlanID || strings.Contains(host, "commandcode")
 }
 
 func buildChat(r *Request, model, host string, rejectTemp bool) []byte {
