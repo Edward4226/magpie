@@ -518,7 +518,10 @@ func buildCodeAssistSent(r *Request, sent, agent string) []byte {
 			if len(schema) == 0 {
 				schema = json.RawMessage(`{"type":"object","properties":{}}`)
 			}
-			if ag {
+			if ag && claude {
+				// Antigravity's Claude takes the OpenAPI-style projection.
+				// Its Gemini models take the JSON schema as Gemini CLI and
+				// Vertex AI send it, unions and constraints kept (#3481).
 				d["parameters"] = plainSchema(schema)
 			} else {
 				d["parametersJsonSchema"] = schema
@@ -813,9 +816,10 @@ func geminiGeneration(model string) int {
 	return n
 }
 
-// plainSchema is a JSON schema cut down to what Antigravity's function
-// declarations take: an OpenAPI-style subset with no references, unions
-// or keywords outside it.
+// plainSchema is a JSON schema cut down to what Antigravity's Claude
+// function declarations take: an OpenAPI-style subset with no references,
+// unions or keywords outside it. Gemini on Antigravity takes the schema as
+// parametersJsonSchema and doesn't go through here.
 func plainSchema(raw json.RawMessage) json.RawMessage {
 	var root map[string]any
 	if json.Unmarshal(raw, &root) != nil {

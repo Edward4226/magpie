@@ -20,15 +20,17 @@ const arrayItemsAsk = `{"model":"antigravity/gemini-3.8-flash","max_tokens":32,"
 // Google's 400 to it, the reporter's error line in Google's error shape.
 const arrayItems400 = `{"error":{"code":400,"message":"* GenerateContentRequest.tools[0].function_declarations[17].parameters.properties[batch].items: missing field.\n* GenerateContentRequest.tools[0].function_declarations[18].parameters.properties[items].items: missing field.\n","status":"INVALID_ARGUMENT"}}`
 
-// An array with no items goes to Antigravity with items {}, which Google
-// takes (the reporter's table: {} and {"type":"string"} both answer 200);
-// before, it went as it came and Google turned the whole turn away.
+// An array with no items in Antigravity's OpenAPI-style parameters goes with
+// items {}, which Google takes (the reporter's table: {} and {"type":"string"}
+// both answer 200); before, it went as it came and Google turned the whole
+// turn away. Those parameters are Antigravity's Claude path now: its Gemini
+// models carry the schema as parametersJsonSchema (#3481).
 func TestAntigravityArrayGetsItems(t *testing.T) {
 	r, err := parseAnthropic([]byte(arrayItemsAsk))
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := gjson.ParseBytes(buildCodeAssist(r, "gemini-3.8-flash", "antigravity"))
+	env := gjson.ParseBytes(buildCodeAssist(r, "claude-sonnet-4-6", "antigravity"))
 	decls := env.Get("request.tools.0.functionDeclarations")
 	if n := len(decls.Array()); n != 2 {
 		t.Fatalf("declarations %s", decls.Raw)
