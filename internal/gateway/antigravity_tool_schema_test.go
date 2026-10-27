@@ -77,9 +77,9 @@ func TestAntigravityGeminiKeepsToolSchema(t *testing.T) {
 	}
 }
 
-// Antigravity's Claude models keep the OpenAPI-style parameters: the union
-// resolves as before, and the items: {} no longer rides beside the type it
-// did not resolve to (#3481). An array property keeps its items.
+// Antigravity's Claude models keep the OpenAPI-style parameters. The union
+// carrying items resolves to array under the current projection, so its
+// array keywords are valid there; an object-only keyword still goes (#3481).
 func TestAntigravityClaudeStillProjectsToolSchema(t *testing.T) {
 	decl := codeAssistToolDecl(t, "claude-sonnet-4-6", "antigravity", unionValueSchema)
 	if _, ok := decl["parametersJsonSchema"]; ok {
@@ -91,12 +91,15 @@ func TestAntigravityClaudeStillProjectsToolSchema(t *testing.T) {
 	}
 	props, _ := params["properties"].(map[string]any)
 	value, _ := props["value"].(map[string]any)
-	if value["type"] != "boolean" || value["nullable"] != true {
+	if value["type"] != "array" || value["nullable"] != true {
 		t.Errorf("union = %v", value)
 	}
-	for _, k := range []string{"items", "minItems", "maxItems"} {
+	if !reflect.DeepEqual(value["items"], map[string]any{}) {
+		t.Errorf("union items = %v", value["items"])
+	}
+	for _, k := range []string{"properties", "minProperties", "maxProperties"} {
 		if _, ok := value[k]; ok {
-			t.Errorf("union kept %q: %v", k, value)
+			t.Errorf("union kept object keyword %q: %v", k, value)
 		}
 	}
 	if value["description"] != "any JSON value" {
@@ -152,7 +155,7 @@ func TestPlainSchemaDropsKeywordsOfAnotherType(t *testing.T) {
 		"scalar":{"type":"string","pattern":"^a","description":"a"},
 		"map":{"type":"object","properties":{"a":{"type":"string"}},"minProperties":1,"maxProperties":2},
 		"list":{"type":"array","items":{"type":"array","items":{"type":"string"}},"minItems":1,"maxItems":2},
-		"union":{"type":"boolean","nullable":true,"description":"any"},
+		"union":{"type":"array","items":{},"minItems":1,"maxItems":2,"nullable":true,"description":"any"},
 		"any":{"type":"boolean","nullable":true},
 		"grid":{"type":"array","items":{"type":"array","items":{"type":"object","properties":{"cell":{"type":"string"}}}}}
 	}}`
@@ -170,15 +173,14 @@ func TestPlainSchemaDropsKeywordsOfAnotherType(t *testing.T) {
 }
 
 // The reported fixture on its own: a union type with items: {} resolves to
-// its first non-null type and no longer carries items, so the projection
-// never says items beside a type that isn't array (#3481).
-func TestPlainSchemaUnionWithItemsDropsItems(t *testing.T) {
+// array under the current projection, where items is valid (#3481).
+func TestPlainSchemaUnionWithItemsIsArray(t *testing.T) {
 	in := `{"type":["null","boolean","object","array","number","string"],"items":{}}`
 	var got any
 	if err := json.Unmarshal(plainSchema(json.RawMessage(in)), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"type": "boolean", "nullable": true}
+	want := map[string]any{"type": "array", "items": map[string]any{}, "nullable": true}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
