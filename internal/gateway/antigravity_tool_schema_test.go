@@ -155,7 +155,7 @@ func TestPlainSchemaDropsKeywordsOfAnotherType(t *testing.T) {
 		"scalar":{"type":"string","pattern":"^a","description":"a"},
 		"map":{"type":"object","properties":{"a":{"type":"string"}},"minProperties":1,"maxProperties":2},
 		"list":{"type":"array","items":{"type":"array","items":{"type":"string"}},"minItems":1,"maxItems":2},
-		"union":{"type":"array","items":{},"minItems":1,"maxItems":2,"nullable":true,"description":"any"},
+		"union":{"type":"object","properties":{"x":{"type":"string"}},"minProperties":3,"maxProperties":4,"nullable":true,"description":"any"},
 		"any":{"type":"boolean","nullable":true},
 		"grid":{"type":"array","items":{"type":"array","items":{"type":"object","properties":{"cell":{"type":"string"}}}}}
 	}}`
