@@ -40,10 +40,13 @@ func TestGeminiToolTypesItemsBeforeEnum(t *testing.T) {
 	}
 }
 
-// Every node Antigravity is sent has items only as an array and
-// properties only as an object, on each route: the tool as Claude Code
-// sent it, as this version's local magpie passes it on, and as a magpie
-// from before passed it on (display typed "string").
+// Every node Antigravity's OpenAPI-style parameters is sent has items only
+// as an array and properties only as an object, on each route: the tool as
+// Claude Code sent it, as this version's local magpie passes it on, and as a
+// magpie from before passed it on (display typed "string"). Gemini models
+// now carry the schema as parametersJsonSchema (#3481), so this projection
+// covers the Claude path; the Gemini schema itself is checked by the
+// parametersJsonSchema tests.
 func TestAntigravityItemsOnlyOnArrays(t *testing.T) {
 	older := `{"model":"group/gemini-3-8-flash","max_tokens":32,"messages":[{"role":"user","content":"hi"}],
  "tools":[{"name":"show","description":"show rows","input_schema":{"type":"object","properties":{
@@ -60,7 +63,7 @@ func TestAntigravityItemsOnlyOnArrays(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		decls := gjson.ParseBytes(buildCodeAssist(r, "gemini-3.8-flash", "antigravity")).Get("request.tools.0.functionDeclarations")
+		decls := gjson.ParseBytes(buildCodeAssist(r, "claude-sonnet-4-6", "antigravity")).Get("request.tools.0.functionDeclarations")
 		if !decls.IsArray() || len(decls.Array()) == 0 {
 			t.Fatalf("%s: no declarations", name)
 		}
