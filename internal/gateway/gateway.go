@@ -8006,7 +8006,17 @@ func buildFor(p provider.Provider, proto provider.Protocol, r *Request, model st
 		c.instructionsKept = true
 		r = &c
 	}
-	return build(proto, r, model, buildHost(p), p.RejectsTemperature(model))
+	body, err := build(proto, r, model, buildHost(p), p.RejectsTemperature(model))
+	if err != nil {
+		return nil, err
+	}
+	if proto == provider.Chat && (p.Preset == "mistral" || p.Host() == "api.mistral.ai") {
+		// A translated request is built after the relay's corrections, so
+		// the reasoning_content buildChat adds for a DeepSeek-like model
+		// name needs Mistral's thinking-part conversion here too (#4906).
+		body = mistralThinking(body)
+	}
+	return body, nil
 }
 
 func build(proto provider.Protocol, r *Request, model, host string, rejectTemp bool) ([]byte, error) {
