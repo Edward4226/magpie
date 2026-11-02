@@ -236,7 +236,7 @@ func hermesIn(at place) *Agent {
 				return edit.SetYAML(path, edit.KV{Path: "agent.reasoning_effort", Value: v})
 			},
 			Options: func(map[string]string) []Option {
-				return static("none", "minimal", "low", "medium", "high", "xhigh")
+				return static("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 			},
 		}},
 	}
