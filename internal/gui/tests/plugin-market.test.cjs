@@ -66,8 +66,11 @@ function server(lang, asked) {
     // the page asks for the market in parts (#488)
     if (url.pathname === "/api/plugins/market" || url.pathname === "/api/plugins" || url.pathname === "/api/plugins/listings") { const m = market(); return json(url.pathname === "/api/plugins" ? m.state : url.pathname === "/api/plugins/listings" ? { listings: m.listings } : m); }
     if (url.pathname === "/api/plugins/search") {
-      asked.push(["search", url.searchParams.get("q")]);
-      return json({ hits: [
+      const q = url.searchParams.get("q");
+      asked.push(["search", q]);
+      return json({ hits: q === "proxy" ? [
+        { package: "@magpie-community/opencode-qoder-auth", version: "0.1.0", description: "Qoder through a proxy", publisher: "someone" },
+      ] : [
         { package: "opencode-copilot-auth", version: "0.0.9" },
         { package: "opencode-copilot-proxy-auth", version: "2.1.0", description: "Copilot through a proxy", publisher: "someone" },
       ] });
@@ -224,6 +227,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.ok(asked.some(([k, v]) => k === "search" && v === "copilot"));
         assert.equal(await q.evaluate((e) => e === document.activeElement), true, "typing keeps the field");
         await shot(view, `plugins-search-${engine}-${lang}`);
+
+        // a search whose matches are only npm's: no listing matches
+        // "proxy", so npm's hit for the community plugin shows as the
+        // section's one card, not hidden by a listing another query
+        // matched (#3929)
+        await q.fill("proxy");
+        const npmHit = view.locator('.pm-card[data-pkg="@magpie-community/opencode-qoder-auth"]');
+        await npmHit.waitFor();
+        assert.equal(await npmHit.count(), 1, "only npm's hit has this package");
+        assert.equal((await npmHit.evaluate((e) => e.closest("section.pm-sec")?.querySelector(".pm-sechead h3")?.textContent || "")).trim(), w.onNpm);
+        assert.equal(await npmHit.locator("xpath=ancestor::section[1]").locator(".pm-card").count(), 1, "the npm section's hit of a package no card above shows is alone");
         await q.fill("");
 
         // Installed: why one didn't load, an update, a removal
