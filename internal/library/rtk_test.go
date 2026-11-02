@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/testenv"
 )
@@ -715,6 +716,64 @@ func TestRTKNoHookGrokApp(t *testing.T) {
 	}
 	if _, err := RTKTakes("grok-app"); err == nil || !strings.Contains(err.Error(), "no Grok or Grok App agent") {
 		t.Fatalf("magpie library rtk on grok-app: %v", err)
+	}
+}
+
+// TestRTKExtensionFollowsAgentDir (#2818): omp's agent folder follows
+// PI_CONFIG_DIR, OMP_PROFILE and PI_CODING_AGENT_DIR (agent.ompDir), and
+// Pi's follows PI_CODING_AGENT_DIR (agent.piDir); the detected agent's Dir
+// is that folder (targets.go's omp branch uses it). rtk's extension goes in
+// extensions/ there, and the folder rtk's installer is given is that one,
+// not ~/.omp/agent or ~/.pi/agent: with the extension only in the agent's
+// own folder, the old default path found nothing.
+func TestRTKExtensionFollowsAgentDir(t *testing.T) {
+	h := sandbox(t)
+	real := detected
+	defer func() { detected = real }()
+	var agents []*agent.Agent
+	for _, id := range []string{"omp", "pi"} {
+		a := &agent.Agent{ID: id, Name: id, Icon: id, Bin: id, Dir: filepath.Join(h, "elsewhere", id, "agent")}
+		write(t, filepath.Join(a.Dir, "extensions", "rtk.ts"), "x")
+		agents = append(agents, a)
+	}
+	detected = func() []*agent.Agent { return agents }
+
+	for _, a := range agents {
+		sp := rtkSpecs[a.ID]
+		ext := filepath.Join(a.Dir, "extensions", "rtk.ts")
+		if !sp.has(a) {
+			t.Errorf("%s: no extension seen in %s; the default %s was looked in", a.ID, a.Dir, filepath.Join(h, "."+a.ID, "agent"))
+		}
+		if files := sp.files(a); len(files) != 1 || files[0] != ext {
+			t.Errorf("%s: files = %v, want [%s]", a.ID, files, ext)
+		}
+		if got := sp.dir(a); got != a.Dir {
+			t.Errorf("%s: the folder made before install = %s, want %s", a.ID, got, a.Dir)
+		}
+	}
+
+	v := ReadRTK()
+	for _, a := range agents {
+		on := false
+		for _, row := range v.Agents {
+			if row.ID == a.ID {
+				on = row.On
+			}
+		}
+		if !on {
+			t.Errorf("%s isn't listed with rtk on from its own folder", a.ID)
+		}
+	}
+
+	// switching it off takes the extension out of that folder
+	if _, err := SetRTK("omp", false); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(agents[0].Dir, "extensions", "rtk.ts")) {
+		t.Error("omp's extension is still in its own folder")
+	}
+	if exists(filepath.Join(h, ".omp")) {
+		t.Error("~/.omp was made beside omp's own folder")
 	}
 }
 

@@ -467,15 +467,24 @@ var openCodeVersion = func() string {
 
 func hermesPlugin(a *agent.Agent) string { return filepath.Join(a.Dir, "plugins", "rtk-rewrite") }
 
-// extensionSpec is pi's and omp's: an extension of rtk's own, and nothing else.
+// extensionSpec is pi's and omp's: an extension of rtk's own, in the
+// agent's own folder -- Pi's or omp's, wherever its variables moved it --
+// and nothing else. A WSL agent keeps rtkAt: its distro's installer writes
+// under the distro's home, which a.Dir may not open the same way.
 func extensionSpec(id string) rtkSpec {
-	ext := func(a *agent.Agent) string { return rtkAt(a, "."+id, "agent", "extensions", "rtk.ts") }
+	dir := func(a *agent.Agent) string {
+		if a == nil || a.WSL != "" || a.Dir == "" {
+			return rtkAt(a, "."+id, "agent")
+		}
+		return a.Dir
+	}
+	ext := func(a *agent.Agent) string { return filepath.Join(dir(a), "extensions", "rtk.ts") }
 	return rtkSpec{
 		flags: []string{"--agent", id}, patch: true,
 		has:    func(a *agent.Agent) bool { return exists(ext(a)) },
 		files:  func(a *agent.Agent) []string { return []string{ext(a)} },
 		remove: func(a *agent.Agent) error { return rm(ext(a)) },
-		dir:    func(a *agent.Agent) string { return rtkAt(a, "."+id, "agent") },
+		dir:    dir,
 	}
 }
 
