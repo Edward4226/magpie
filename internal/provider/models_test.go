@@ -291,3 +291,74 @@ func TestEntryForUnnamedModel(t *testing.T) {
 		t.Fatalf("name %q, default %q", e.Name, e.Default)
 	}
 }
+
+// A provider-qualified id stays bound to the provider its prefix names.
+// A group member xiaomi/mimo-v2.6-pro was shown as skipped while xiaomi
+// was off, but live requests rebound it to Command Code, whose catalog
+// also lists xiaomi's vendor id. The prefix of a configured provider must
+// terminate resolution; an unknown prefix still falls through for a bare
+// upstream id containing a slash (#3698).
+func TestPrefixOfAnOffProviderResolvesNowhere(t *testing.T) {
+	azureHome(t)
+	if err := catalog.SaveLive("commandcode", "http://127.0.0.1:1/v1", []catalog.Model{
+		{ID: "deepseek/deepseek-v4.1-flash"},
+		{ID: "xiaomi/mimo-v2.6-pro"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(Provider{ID: "commandcode", Chat: "http://127.0.0.1:1/v1", Key: "k",
+		Models: []string{"deepseek/deepseek-v4.1-flash"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// With no xiaomi provider configured, the slash in this vendor id is
+	// not a provider prefix and the one provider listing it wins.
+	if p, model, ok := Resolve("xiaomi/mimo-v2.6-pro"); !ok || p.ID != "commandcode" || model != "xiaomi/mimo-v2.6-pro" {
+		t.Fatalf("unknown prefix: %v %q %q", ok, p.ID, model)
+	}
+
+	// Once xiaomi exists but is off, the same id belongs to xiaomi and
+	// resolves nowhere, rather than falling through to Command Code.
+	if err := Save(Provider{ID: "xiaomi", Chat: "http://127.0.0.1:1/v1", Key: "k",
+		Models: []string{"mimo-v2.6-flash", "mimo-v2.6-pro"}, Off: true}); err != nil {
+		t.Fatal(err)
+	}
+	if p, model, ok := Resolve("xiaomi/mimo-v2.6-pro"); ok {
+		t.Fatalf("off prefix resolved to %q %q", p.ID, model)
+	}
+	if p, model, ok := Resolve("commandcode/xiaomi/mimo-v2.6-pro"); !ok || p.ID != "commandcode" || model != "xiaomi/mimo-v2.6-pro" {
+		t.Fatalf("explicit Command Code prefix: %v %q %q", ok, p.ID, model)
+	}
+	if p, model, ok := Resolve("commandcode/deepseek/deepseek-v4.1-flash"); !ok || p.ID != "commandcode" || model != "deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("picked model: %v %q %q", ok, p.ID, model)
+	}
+
+	// With Command Code serving its whole catalog, the group's off Xiaomi
+	// member is skipped and the picked model remains reachable.
+	if err := Save(Provider{ID: "commandcode", Chat: "http://127.0.0.1:1/v1", Key: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveGroup(Group{ID: "pro", Name: "pro", Routing: Ordered,
+		Members: []string{"xiaomi/mimo-v2.6-pro", "commandcode/deepseek/deepseek-v4.1-flash"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, members, ok := FindGroup("group/pro")
+	if !ok || len(members) != 1 || members[0].Provider.ID != "commandcode" || members[0].Model != "deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("group members: %v %+v", ok, members)
+	}
+	if _, _, ok := ResolveRoute("xiaomi/mimo-v2.6-pro"); ok {
+		t.Fatal("routing resolved the off provider's member")
+	}
+	if p, model, ok := Resolve("group/pro"); !ok || p.ID != "commandcode" || model != "deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("group resolves to %v %q %q", ok, p.ID, model)
+	}
+
+	// Select none is the same binding: an explicit provider/model doesn't
+	// escape it through another provider's catalog.
+	if err := Save(Provider{ID: "empty", Chat: "http://127.0.0.1:1/v1", Key: "k", NoModels: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := Resolve("empty/xiaomi/mimo-v2.6-pro"); ok {
+		t.Fatal("a Select none provider's prefix resolved")
+	}
+}
