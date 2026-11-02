@@ -36,11 +36,42 @@ var (
 	modelScopeQueues sync.Map
 )
 
+// modelScopeRatioSizes are the pixel sizes ModelScope's image API takes
+// for the ratios its Qwen-Image models document. API-Inference's size is
+// WIDTHxHEIGHT, so a ratio sent as-is is turned away with "size format
+// should be WxH" (#4671).
+var modelScopeRatioSizes = map[string]string{
+	"1:1": "2048x2048", "4:3": "2400x1792", "3:4": "1792x2400",
+	"3:2": "2528x1696", "2:3": "1696x2528", "16:9": "2752x1536",
+	"9:16": "1536x2752",
+}
+
+// modelScopeSize is size as ModelScope's image API takes it: WIDTHxHEIGHT
+// as given, a documented ratio as its pixel size, "" for the model's own.
+// Another ratio is refused here with what to send instead.
+func modelScopeSize(size string) (string, error) {
+	size = strings.TrimSpace(size)
+	switch {
+	case size == "" || strings.EqualFold(size, "auto"):
+		return "", nil
+	case strings.Contains(size, ":"):
+		if s, ok := modelScopeRatioSizes[strings.ReplaceAll(size, " ", "")]; ok {
+			return s, nil
+		}
+		return "", fmt.Errorf("ModelScope's images API takes no aspect ratio as size, and %q isn't one magpie can turn into a size (it can: 1:1, 4:3, 3:4, 3:2, 2:3, 16:9, 9:16): give WIDTHxHEIGHT (e.g. 2048x2048), or an aspect ratio magpie knows", size)
+	}
+	return size, nil
+}
+
 func (s *Server) drawModelScope(ctx context.Context, p provider.Provider, model string, d drawing) (drawn, int, error) {
+	size, err := modelScopeSize(d.Size)
+	if err != nil {
+		return drawn{}, http.StatusBadRequest, err
+	}
 	base := strings.TrimRight(p.Base(provider.Chat), "/")
 	req := map[string]any{"model": model, "prompt": d.Prompt}
-	if d.Size != "" && d.Size != "auto" {
-		req["size"] = d.Size
+	if size != "" {
+		req["size"] = size
 	}
 	if len(d.Images) > 0 { // its edit models take the images by URL
 		var urls []string
