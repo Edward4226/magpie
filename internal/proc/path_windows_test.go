@@ -65,3 +65,71 @@ func TestUserPathFnmNode(t *testing.T) {
 		t.Fatalf("FindTool(npx) = %q, want the default alias's %q", got, filepath.Join(alias, "npx.cmd"))
 	}
 }
+
+// #2735: mise's Node on Windows installs npm's global packages into the
+// version folder itself (installs\node\<version>\pi.cmd), with no bin under
+// it and no shim: `npm i -g` from a mise shell left magpie's shims folder
+// without one, so every Pi row said "CLI not found" while a terminal ran it.
+// UserBinDirs names each installed version, newest first, so FindTool finds
+// the .cmd. MISE_DATA_DIR and an absolute XDG_DATA_HOME move mise's root, as
+// they already did for its shims.
+func TestUserBinDirsMiseNode(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("FNM_DIR", "")
+	t.Setenv("APPDATA", filepath.Join(t.TempDir(), "Roaming"))
+
+	for _, tc := range []struct {
+		name string
+		xdg  bool
+		mise bool
+	}{
+		{name: "LOCALAPPDATA"},
+		{name: "MISE_DATA_DIR", mise: true},
+		{name: "XDG_DATA_HOME", xdg: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local := filepath.Join(t.TempDir(), "Local")
+			t.Setenv("LOCALAPPDATA", local)
+			var xdg, data string
+			switch {
+			case tc.mise:
+				data = filepath.Join(t.TempDir(), "mise-data")
+			case tc.xdg:
+				xdg = filepath.Join(t.TempDir(), "xdg")
+			}
+			t.Setenv("XDG_DATA_HOME", xdg)
+			t.Setenv("MISE_DATA_DIR", data)
+			root := filepath.Join(local, "mise")
+			switch {
+			case data != "":
+				root = data
+			case xdg != "":
+				root = filepath.Join(xdg, "mise")
+			}
+			node := filepath.Join(root, "installs", "node")
+			newest := filepath.Join(node, "24.13.0")
+			older := filepath.Join(node, "22.1.0")
+			for _, d := range []string{newest, older} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pi := filepath.Join(newest, "pi.cmd")
+			if err := os.WriteFile(pi, []byte("@echo pi\r\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			Forget()
+			dirs := UserBinDirs()
+			i := slices.Index(dirs, newest)
+			if i < 0 {
+				t.Fatalf("UserBinDirs = %q, want mise's Node %q among them", dirs, newest)
+			}
+			if j := slices.Index(dirs, older); j < 0 || j < i {
+				t.Fatalf("UserBinDirs = %q, want %q before %q (newest first)", dirs, newest, older)
+			}
+			if got := FindTool("pi"); !strings.EqualFold(got, pi) {
+				t.Fatalf("FindTool(pi) = %q, want %q", got, pi)
+			}
+		})
+	}
+}

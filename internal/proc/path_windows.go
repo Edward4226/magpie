@@ -24,8 +24,8 @@ func UserPath() {
 
 // UserBinDirs are the folders a user's command-line tools are installed in
 // that exist here — npm's global one, bun's, volta's, pnpm's, mise's
-// shims, the standalone installers', each Node version of fnm's, its
-// default first — for finding one PATH doesn't reach.
+// shims and Node versions, the standalone installers', each Node version
+// of fnm's, its default first — for finding one PATH doesn't reach.
 func UserBinDirs() []string {
 	home, _ := os.UserHomeDir()
 	// mise's data folder: MISE_DATA_DIR, else XDG_DATA_HOME's mise (which
@@ -44,6 +44,16 @@ func UserBinDirs() []string {
 		filepath.Join(appdir.Getenv("LOCALAPPDATA"), "Volta", "bin"),
 		filepath.Join(appdir.Getenv("LOCALAPPDATA"), "pnpm"),
 		filepath.Join(mise, "shims"),
+	}
+	// mise's Node versions: npm's global packages land in the version folder
+	// itself on Windows (installs\node\<version>\pi.cmd), with no bin under
+	// it and no shim, so shims alone miss a CLI `npm i -g` put there (#2735).
+	// nodeVersions gives them highest first, as a terminal would reach them.
+	miseNode := filepath.Join(mise, "installs", "node")
+	if filepath.IsAbs(miseNode) {
+		for _, v := range nodeVersions(miseNode, "") {
+			known = append(known, filepath.Join(miseNode, v))
+		}
 	}
 	for _, r := range fnmWinRoots(home, appdir.Getenv("APPDATA"), os.Getenv("FNM_DIR")) {
 		known = append(known, fnmWinBins(r)...)
