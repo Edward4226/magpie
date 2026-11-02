@@ -12731,6 +12731,24 @@ function dropSigningIn(id) {
   signing = null;
 }
 
+// pluginOtherWays: a moved plugin's sign-in has a way besides the one under
+// way (or the one that failed); while waiting the key has its own link, so
+// it isn't counted there.
+function pluginOtherWays(sub, method, keyWay) {
+  if (!sub.plugin || !sub.moved) return false;
+  return (sub.plugin.methods || []).some((_, i) => i !== method && i !== keyWay);
+}
+
+// openPluginOtherWays: show the plugin's ways in place of the sign-in, with
+// the account and proxy it was using. It only switches the box: a sign-in
+// still cancelable is let go, and no new one starts.
+function openPluginOtherWays(sub) {
+  const flow = signing;
+  stopSignIn();
+  signing = { agent: sub.agent, state: "method", forUser: flow?.forUser, picked: flow?.picked };
+  renderProviders();
+}
+
 // renderSigning: where a sign-in stands, in place of the button that
 // started it — waiting on the browser, or what went wrong.
 function renderSigning(sub) {
@@ -12811,6 +12829,13 @@ function renderSigning(sub) {
     const ghe = copilotHostSwitch(sub);
     if (ghe) acts.append(ghe);
     acts.append(signInProxyLink(sub));
+    // a failure keeps the plugin's other ways at hand: the error may name
+    // one of them, and the picker only switches this box
+    if (pluginOtherWays(sub, signing.method, -1)) {
+      const other = el("button", "link other-ways", t("Other ways to sign in…"));
+      other.onclick = () => openPluginOtherWays(sub);
+      acts.append(other);
+    }
     tt.append(acts);
     if (signing.askProxy) tt.append(signInProxyForm(sub));
     box.append(close, again);
@@ -12950,16 +12975,11 @@ function renderSigning(sub) {
   // a moved subscription goes straight to its plugin's usual way (#777:
   // one click, as the built-in did); ways other than that one and the key
   // above (ZCode's app's own sign-in) are a link away
-  const others = sub.plugin && sub.moved && signing.state === "waiting"
-    ? (sub.plugin.methods || []).filter((_, i) => i !== signing.method && i !== keyWay).length : 0;
+  const others = signing.state === "waiting" && pluginOtherWays(sub, signing.method, keyWay);
   if (others) {
     const acts = tt.querySelector(".acts") || tt.appendChild(el("span", "acts"));
     const other = el("button", "link other-ways", t("Other ways to sign in…"));
-    other.onclick = () => {
-      stopSignIn();
-      signing = { agent: sub.agent, state: "method" };
-      renderProviders();
-    };
+    other.onclick = () => openPluginOtherWays(sub);
     acts.append(other);
   }
   if (sub.importable) {
