@@ -3049,7 +3049,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// thoughtCleanMost times running (holdsThinking, #4512): its
 		// filter refuses after thinking hardly ever, and held, the agent
 		// waited every request's whole thinking out.
-		hw.thinkingShown = !s.holdsThinking(c) || last
+		// Nor is it held while Settings' RefusalRetries lets no refusal be
+		// asked of another candidate: the reasoning can stream as it comes
+		// and the refusal still reaches the agent, as it does on the last
+		// candidate (#4539).
+		hw.thinkingShown = !s.holdsThinking(c) || last || !refusalAsksAgain(refusals+1)
 		hw.ctx, hw.alive, hw.streams = r.Context(), kept, streams
 		// a Claude subscription account's refusal of a big conversation
 		// isn't told again to the subscription's other accounts
