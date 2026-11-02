@@ -40,9 +40,14 @@ func TestParseProbe(t *testing.T) {
 
 	// consomme networking (#1230), and virtioproxy, its name before WSL
 	// 2.9: 127.0.0.1 is relayed to Windows' own, and the default route is
-	// Windows' next hop (a TUN proxy's 198.18.0.2), not Windows. A mode
-	// wslinfo didn't name, or one that isn't these, keeps the route.
+	// Windows' next hop (a TUN proxy's 198.18.0.2), not Windows. WSL 1
+	// (#3333) shares Windows' network stack, so its 127.0.0.1 is Windows'
+	// too, whatever its default route says. A mode wslinfo didn't name, or
+	// one that isn't these, keeps the route.
 	for out, host := range map[string]string{
+		"net:wsl1\n":        "",
+		"net:WSL1\r\n":      "",
+		"net:  wsl1  \n":    "",
 		"net:consomme\n":    "",
 		"net:Consomme\r\n":  "",
 		"net:virtioproxy\n": "",
