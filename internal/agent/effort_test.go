@@ -118,6 +118,32 @@ func TestEffortFields(t *testing.T) {
 	}
 }
 
+// #3046: Hermes takes max and ultra (VALID_REASONING_EFFORTS), so the
+// panel offers both in its own order and can set each without losing the
+// rest of the config.
+func TestHermesEffortOffersMaxAndUltra(t *testing.T) {
+	home := effortHome(t)
+	writeFile(t, filepath.Join(appdir.HermesHomeIn(home), "config.yaml"), "model:\n  default: x\nagent:\n  max_turns: 9\n")
+	h := hermes(home)
+	f := h.Field("effort")
+	want := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+	opts := f.Options(map[string]string{})
+	if len(opts) != len(want) {
+		t.Fatalf("hermes effort options: %+v, want %v", opts, want)
+	}
+	for i, w := range want {
+		if opts[i].Value != w {
+			t.Fatalf("hermes effort option %d: %q, want %q", i, opts[i].Value, w)
+		}
+	}
+	for _, v := range []string{"max", "ultra"} {
+		setEffort(t, h, v, "max_turns: 9")
+		if got, _ := edit.GetYAML(h.Path, "model.default"); got != "x" {
+			t.Fatalf("hermes model after %s: %q", v, got)
+		}
+	}
+}
+
 func TestCommandCodeEffort(t *testing.T) {
 	home := effortHome(t)
 	path := filepath.Join(home, ".commandcode", "settings.json")
