@@ -17,6 +17,7 @@ func TestSet(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	t.Setenv("MAGPIE_EXECUTABLE", "")
 	t.Setenv("APPIMAGE", "/opt/my apps/magpie.AppImage")
 	if Enabled() != Off {
 		t.Fatal("on before it was turned on")
@@ -46,5 +47,21 @@ func TestSet(t *testing.T) {
 	}
 	if err := Set(false); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A packager names the launcher to start, which for Nix and Guix is a
+// wrapper with its own environment and not this process's executable. It is
+// started as written, path and all.
+func TestSelfUsesPackagerExecutable(t *testing.T) {
+	t.Setenv("APPIMAGE", "")
+	const wrapper = "/nix/store/example/bin/magpie app"
+	t.Setenv("MAGPIE_EXECUTABLE", wrapper)
+	got, err := self()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != wrapper {
+		t.Fatalf("self() = %q, want the packager's %q", got, wrapper)
 	}
 }
