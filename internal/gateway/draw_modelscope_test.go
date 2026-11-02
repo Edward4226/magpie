@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -140,6 +141,64 @@ func TestModelScopeDraws(t *testing.T) {
 	}
 	if m.most.Load() != 1 {
 		t.Fatalf("%d tasks ran at once; ModelScope takes one", m.most.Load())
+	}
+}
+
+// ModelScope's image API takes WIDTHxHEIGHT, not the aspect-ratio values
+// the MCP schema allows. A documented ratio is sent at its pixel size;
+// WIDTHxHEIGHT goes as given; an unknown ratio is refused before the
+// upstream is asked, with a usable alternative (#4671).
+func TestModelScopeDrawsARatioAtItsSize(t *testing.T) {
+	for _, c := range []struct {
+		size  string
+		want  string
+		code  int
+		calls int
+	}{
+		{"1:1", "2048x2048", 200, 1},
+		{"4:3", "2400x1792", 200, 1},
+		{"3:4", "1792x2400", 200, 1},
+		{"3:2", "2528x1696", 200, 1},
+		{"2:3", "1696x2528", 200, 1},
+		{"16:9", "2752x1536", 200, 1},
+		{"9:16", "1536x2752", 200, 1},
+		{" 3:4 ", "1792x2400", 200, 1},
+		{"1024x1365", "1024x1365", 200, 1},
+		{"", "", 200, 1},
+		{"auto", "", 200, 1},
+		{"AUTO", "", 200, 1},
+		{"5:4", "", 400, 0},
+	} {
+		t.Run(c.size, func(t *testing.T) {
+			s, m := modelScoped(t)
+			ask := `{"model":"ms/Qwen/Qwen-Image-2.1","prompt":"a cat"`
+			if c.size != "" {
+				ask += `,"size":` + strconv.Quote(c.size)
+			}
+			ask += "}"
+			code, _, raw := postImages(t, s, "/v1/images/generations", "application/json", ask)
+			if code != c.code || len(m.bodies) != c.calls {
+				t.Fatalf("code %d after %d calls, want %d after %d: %s", code, len(m.bodies), c.code, c.calls, raw)
+			}
+			if c.code == 400 {
+				if !strings.Contains(raw, "WIDTHxHEIGHT") || !strings.Contains(raw, "2048x2048") {
+					t.Fatalf("the error doesn't say what to send instead: %s", raw)
+				}
+				return
+			}
+			var sent map[string]any
+			if err := json.Unmarshal([]byte(m.bodies[0]), &sent); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := sent["size"]
+			if c.want == "" {
+				if ok {
+					t.Fatalf("sent size %v for %q", got, c.size)
+				}
+			} else if got != c.want {
+				t.Fatalf("sent size %v for %q, want %q", got, c.size, c.want)
+			}
+		})
 	}
 }
 
