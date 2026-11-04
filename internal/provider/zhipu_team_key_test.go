@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -123,5 +124,182 @@ func TestZhipuKeyTeamFields(t *testing.T) {
 	}
 	if _, ok := got["blank"]; ok {
 		t.Fatalf("a pay-as-you-go key with no team has no card: %+v", got["blank"])
+	}
+}
+
+// #3442: a GLM account can hold its member's own plan and a team seat at
+// once. When the provider names the team, the team's windows are the
+// key's card even though the member's own plan also answers; the own
+// plan's endpoint is not asked at all.
+func TestZhipuTeamBeforeTheMembersOwnPlan(t *testing.T) {
+	isolate(t)
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
+	t.Setenv("PATH", h)
+	for _, v := range agentenv.Vars {
+		t.Setenv(v, "")
+	}
+	var mu sync.Mutex
+	personal, team := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path != "/api/monitor/usage/quota/limit" {
+			t.Errorf("asked %s", r.URL.Path)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("type") == "2" {
+			team++
+			if r.Header.Get("Bigmodel-Organization") != "org-1" || r.Header.Get("Bigmodel-Project") != "proj-1" {
+				t.Errorf("team asked with %v", r.Header)
+			}
+			w.Write([]byte(`{"code":200,"success":true,"data":{"limits":[
+				{"type":"CREDIT_LIMIT","unit":3,"percentage":42,"nextResetTime":1790000000000},
+				{"type":"CREDIT_LIMIT","unit":6,"number":1,"percentage":10,"nextResetTime":1790500000000}]}}`))
+			return
+		}
+		// the member's own plan: the old order preferred it
+		personal++
+		w.Write([]byte(`{"success":true,"data":{"level":"pro","limits":[
+			{"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":12,"nextResetTime":1790000000000}]}}`))
+	}))
+	defer srv.Close()
+	old := http.DefaultClient.Transport
+	http.DefaultClient.Transport = rewrite{srv}
+	t.Cleanup(func() { http.DefaultClient.Transport = old })
+	if err := Save(Provider{ID: "mixed", Name: "Mixed", Chat: "https://open.bigmodel.cn/api/coding/paas/v4",
+		Key: "mixed-k", ZhipuTeam: &ZhipuTeam{"org-1", "proj-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]SubscriptionQuota{}
+	for _, q := range PlanQuotas(context.Background()) {
+		got[q.Provider] = q
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	q, ok := got["mixed"]
+	if !ok || q.Error != "" || q.Plan != "GLM Coding Team" || len(q.Windows) != 2 ||
+		q.Windows[0].Name != "5 hours" || q.Windows[0].Used != 42 ||
+		q.Windows[1].Name != "7 days" || q.Windows[1].Used != 10 {
+		t.Fatalf("the team's card: %+v", q)
+	}
+	if personal != 0 {
+		t.Fatalf("the member's own plan was asked %d times before the team's", personal)
+	}
+	if team != 1 {
+		t.Fatalf("team asked %d times", team)
+	}
+}
+
+// #3442: the provider's team fields decide which plan a key's windows
+// are read from first. The member's own plan is still read when the team
+// doesn't serve the key, and then is not asked as a team's again; a key
+// its own plan refuses keeps that refusal.
+func TestZhipuPlanKeyTeamPrecedence(t *testing.T) {
+	teamWindows := `{"code":200,"success":true,"data":{"limits":[
+		{"type":"CREDIT_LIMIT","unit":3,"percentage":42,"nextResetTime":1790000000000},
+		{"type":"CREDIT_LIMIT","unit":6,"number":1,"percentage":10,"nextResetTime":1790500000000}]}}`
+	ownPlan := `{"success":true,"data":{"level":"pro","limits":[
+		{"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":12,"nextResetTime":1790000000000}]}}`
+	teamRefuses := `{"code":500,"msg":"no team","success":false}`
+	teamEmpty := `{"success":true,"data":{"limits":[]}}`
+	for _, c := range []struct {
+		name      string
+		team      *ZhipuTeam
+		teamReply string
+		ownReply  string
+		wantPlan  string
+		wantTeam  bool
+		wantUsed  []float64
+		wantErr   string
+		wantOwn   int
+		wantTeams int // -1 for at least one
+	}{
+		{name: "team first, own plan also answers", team: &ZhipuTeam{"org-1", "proj-1"},
+			teamReply: teamWindows, ownReply: ownPlan,
+			wantPlan: "GLM Coding Team", wantTeam: true, wantUsed: []float64{42, 10}, wantOwn: 0, wantTeams: 1},
+		{name: "team rejects the key, own plan used", team: &ZhipuTeam{"org-1", "proj-1"},
+			teamReply: teamRefuses, ownReply: ownPlan,
+			wantPlan: "pro", wantUsed: []float64{12}, wantOwn: 1, wantTeams: -1},
+		{name: "team has no windows, own plan used", team: &ZhipuTeam{"org-1", "proj-1"},
+			teamReply: teamEmpty, ownReply: ownPlan,
+			wantPlan: "pro", wantUsed: []float64{12}, wantOwn: 1, wantTeams: -1},
+		{name: "no team, own plan first", ownReply: ownPlan,
+			wantPlan: "pro", wantUsed: []float64{12}, wantOwn: 1, wantTeams: 0},
+		{name: "team configured, own plan refuses the key", team: &ZhipuTeam{"org-1", "proj-1"},
+			teamReply: teamRefuses, ownReply: zhipuEnvelope1000,
+			wantErr: "Zhipu didn't take this key", wantOwn: 1, wantTeams: -1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var events []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if r.URL.Path != "/api/monitor/usage/quota/limit" {
+					events = append(events, "other:"+r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if r.URL.Query().Get("type") == "2" {
+					events = append(events, "team")
+					w.Write([]byte(c.teamReply))
+					return
+				}
+				events = append(events, "own")
+				w.Write([]byte(c.ownReply))
+			}))
+			defer srv.Close()
+			old := http.DefaultClient.Transport
+			http.DefaultClient.Transport = rewrite{srv}
+			t.Cleanup(func() { http.DefaultClient.Transport = old })
+
+			p := Provider{ID: "glm", Chat: "https://open.bigmodel.cn/api/coding/paas/v4", Key: "k", ZhipuTeam: c.team}
+			src, ok := planQuotaSourceOf(p)
+			if !ok {
+				t.Fatal("no plan source")
+			}
+			plan, ws, team, err := planKeyWindows(context.Background(), p, src, p.Key)
+			mu.Lock()
+			defer mu.Unlock()
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("error %v, want %q", err, c.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("error: %v", err)
+			}
+			if plan != c.wantPlan || team != c.wantTeam {
+				t.Fatalf("plan %q team %v, want %q %v", plan, team, c.wantPlan, c.wantTeam)
+			}
+			if c.wantErr == "" {
+				var used []float64
+				for _, w := range ws {
+					used = append(used, w.Used)
+				}
+				if !slices.Equal(used, c.wantUsed) {
+					t.Fatalf("windows %+v, want used %v", ws, c.wantUsed)
+				}
+			}
+			own, teams, lastOwn := 0, 0, -1
+			for i, e := range events {
+				switch e {
+				case "own":
+					own, lastOwn = own+1, i
+				case "team":
+					teams++
+					if lastOwn >= 0 {
+						t.Errorf("team asked again after the own plan: %v", events)
+					}
+				}
+			}
+			if own != c.wantOwn || c.wantTeams >= 0 && teams != c.wantTeams || c.wantTeams < 0 && teams == 0 {
+				t.Fatalf("asked own %d team %d: %v", own, teams, events)
+			}
+		})
 	}
 }

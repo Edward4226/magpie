@@ -744,9 +744,20 @@ func vendorSaid(b []byte, status string) string {
 	return status + ": " + msg
 }
 
-// planKeyWindows asks the vendor for the plan key is on and its windows:
-// a Zhipu or Z.ai key with no plan of its own is a team's, whose windows
-// are asked with type=2 (zcode_team.go), and team says so.
+// zhipuTeamGiven says a provider names its Zhipu or Z.ai team itself,
+// with both the organization and the project its windows are asked with.
+func zhipuTeamGiven(team *ZhipuTeam) bool {
+	t := team.normal()
+	return t != nil && t.Org != "" && t.Project != ""
+}
+
+// planKeyWindows asks the vendor for the plan key is on and its windows.
+// A provider that names a Zhipu or Z.ai team says the key is on that
+// team, which can share an account with the member's own plan, so the
+// team's windows are asked first with type=2 (zcode_team.go) and its own
+// plan is read when the team doesn't serve the key. A provider without
+// the team keeps its own plan first: a key with no plan of its own is a
+// team's, whose windows are asked behind it, and team says so.
 func planKeyWindows(ctx context.Context, p Provider, src planQuotaSource, key string) (plan string, ws []QuotaWindow, team bool, err error) {
 	if hostOf(src.url) == "api.commandcode.ai" {
 		plan, ws, err = cmdKeyWindows(ctx, src, key)
@@ -756,9 +767,19 @@ func planKeyWindows(ctx context.Context, p Provider, src planQuotaSource, key st
 		plan, ws, err = mistralKeyWindows(ctx, src, key)
 		return plan, ws, false, err
 	}
+	zhipu := strings.HasSuffix(src.url, "/api/monitor/usage/quota/limit")
+	if zhipu && zhipuTeamGiven(p.ZhipuTeam) {
+		if tplan, tws, terr := zhipuKeyTeamWindows(ctx, src.url, key, p.ZhipuTeam); terr == nil && len(tws) > 0 {
+			return tplan, tws, true, nil
+		}
+		// the team didn't serve this key, so it may be on its own plan;
+		// don't ask the team again behind it
+		plan, ws, err = planWindows(ctx, src, key)
+		return plan, ws, false, err
+	}
 	plan, ws, err = planWindows(ctx, src, key)
 	// a key refused is refused as a team's too
-	if zhipu := strings.HasSuffix(src.url, "/api/monitor/usage/quota/limit"); zhipu && (err != nil || len(ws) == 0) && !zhipuKeyRefusedErr(err) {
+	if zhipu && (err != nil || len(ws) == 0) && !zhipuKeyRefusedErr(err) {
 		if tplan, tws, terr := zhipuKeyTeamWindows(ctx, src.url, key, p.ZhipuTeam); terr == nil && len(tws) > 0 {
 			return tplan, tws, true, nil
 		}
