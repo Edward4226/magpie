@@ -71,15 +71,15 @@ func TestAntigravityBooleanSchemaAndXKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := gjson.ParseBytes(buildCodeAssist(r, "gemini-3.8-flash", "antigravity"))
-	params := env.Get("request.tools.0.functionDeclarations.0.parameters")
-	if bad := geminiSchemaFaults(params, "parameters"); len(bad) > 0 {
-		t.Fatalf("Google would refuse %v in %s", bad, params.Raw)
+	params := env.Get("request.tools.0.functionDeclarations.0.parametersJsonSchema")
+	if !params.Exists() {
+		t.Fatal("Gemini on Antigravity lost parametersJsonSchema")
 	}
 	rows := params.Get("properties.rows")
-	if rows.Get("type").String() != "array" || rows.Get("items.type").String() != "array" || rows.Get("items.items").Raw != "{}" {
+	if rows.Get("type").String() != "array" || rows.Get("items.type").String() != "array" || rows.Get("items.items").Raw != "true" {
 		t.Errorf("rows: %s", rows.Raw)
 	}
-	if params.Get("properties.region.type").String() != "string" {
+	if params.Get("properties.region.type").String() != "string" || params.Get("properties.region.x-mcp-header").String() != "Region" {
 		t.Errorf("region: %s", params.Get("properties.region").Raw)
 	}
 }
