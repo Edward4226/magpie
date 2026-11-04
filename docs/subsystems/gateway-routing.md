@@ -2377,3 +2377,13 @@ go test -tags nogui ./internal/provider -run 'TestGroup|TestCodexCreditsSwitch|T
 
 The gateway's `TestMain` gives the package a home of its own, so these tests
 never read real providers or accounts.
+
+## A summary refused as unsupported input
+
+A summary request refused 400 with `param: "input"` and code
+`unsupported_input_item` (`unsupportedInputItem`) is asked again with the
+conversation as text, as a missing item and a too-large request are. Command
+Code's words were "Item references need stored responses, which are not kept",
+without naming the item it refused; the plain request carries only messages,
+so it doesn't repeat that input shape. Any other 400 still goes back to Codex.
+`TestCodexCompactUnsupportedInputItemAsksAgainAsText`.

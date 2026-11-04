@@ -2683,6 +2683,28 @@ func refusesInput(status int, b []byte) bool {
 	return unreadableItem.Match(b)
 }
 
+// unsupportedInputItem is a 400 saying an input item's type isn't one the
+// provider takes, with Command Code's unsupported_input_item code. Its
+// message doesn't name the item it refused. A conversation as text is made
+// of messages alone, so a summary request refused this way is asked again
+// that way.
+func unsupportedInputItem(status int, b []byte) bool {
+	if !badRequest(status) {
+		return false
+	}
+	var e struct {
+		Error struct {
+			Param string `json:"param"`
+			Code  string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(b, &e) != nil {
+		return false
+	}
+	return e.Error.Code == "unsupported_input_item" &&
+		(e.Error.Param == "input" || strings.HasPrefix(e.Error.Param, "input[") || strings.HasPrefix(e.Error.Param, "input."))
+}
+
 // withoutBareReasoning is a Responses request without the reasoning items
 // that have nothing sealed in them, where store isn't true: an id and a
 // summary only, as magpie gives Codex in a translated reply (rs_ and
@@ -3556,7 +3578,7 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 	if late() {
 		local = lateSummary()
 		rec, res, err = &recorder{header: http.Header{}, status: 200}, compactResult{}, nil
-	} else if first := rec.status; lacksEndpoint(first) || itemNotFound(rec) || upstreamFailed(rec) || protectionRefused(first, rec.body.Bytes()) ||
+	} else if first := rec.status; lacksEndpoint(first) || itemNotFound(rec) || unsupportedInputItem(first, rec.body.Bytes()) || upstreamFailed(rec) || protectionRefused(first, rec.body.Bytes()) ||
 		summaryTooLarge(rec) || err != nil && protectionWords.MatchString(err.Error()) {
 		who, msg := compactFailure(body, rec)
 		if err != nil {
