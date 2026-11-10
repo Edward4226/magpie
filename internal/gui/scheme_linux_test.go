@@ -24,6 +24,7 @@ func TestRegisterScheme(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FLATPAK_ID", "")
+			t.Setenv("MAGPIE_EXECUTABLE", "")
 			if tc.flatpak {
 				t.Setenv("FLATPAK_ID", "ai.usemagpie.Magpie")
 			}
@@ -92,6 +93,38 @@ func TestRegisterScheme(t *testing.T) {
 	}
 }
 
+// A packager that sets MAGPIE_EXECUTABLE supplies the launcher: a Nix or
+// Guix wrapper sets the environment the real binary needs, so the entry runs
+// the wrapper as written rather than the executable os.Executable reports.
+// The path has a space, which the Exec key must quote to stay one command.
+func TestRegisterSchemeUsesPackagerExecutable(t *testing.T) {
+	t.Setenv("FLATPAK_ID", "")
+	const wrapper = "/nix/store/example/bin/magpie app"
+	t.Setenv("MAGPIE_EXECUTABLE", wrapper)
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	t.Setenv("XDG_DATA_HOME", data)
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	for _, name := range []string{"update-desktop-database", "xdg-mime"} {
+		testenv.Program(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
+	}
+	if err := registerScheme(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(data, "applications", "magpie.desktop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\nExec=\"" + wrapper + "\" %u\n"
+	if !strings.Contains(string(got), want) {
+		t.Fatalf("desktop entry lacks %q:\n%s", want, got)
+	}
+}
+
 // checkDesktopBinding: the entry names the window's class and an icon that
 // is installed, so neither the dock nor the app grid draws a gear (#2626).
 func checkDesktopBinding(t *testing.T, data, entry string) {
@@ -112,6 +145,7 @@ func checkDesktopBinding(t *testing.T, data, entry string) {
 // StartupWMClass; it is written again, once, and the icon put beside it.
 func TestRegisterSchemeBindsAnOlderEntry(t *testing.T) {
 	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("MAGPIE_EXECUTABLE", "")
 	root := t.TempDir()
 	data := filepath.Join(root, "data")
 	t.Setenv("XDG_DATA_HOME", data)

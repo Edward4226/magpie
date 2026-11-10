@@ -67,6 +67,12 @@ func Refresh() error { return refresh() }
 
 // self is the program to start: this one, where it will be at login.
 func self() (string, error) {
+	// a packager can name the launcher to start: a Nix or Guix wrapper
+	// sets the environment the real binary needs, and resolving it to that
+	// binary would start magpie without it. It is used as written.
+	if p := os.Getenv("MAGPIE_EXECUTABLE"); p != "" {
+		return p, nil
+	}
 	// an AppImage runs from a folder mounted anew each time; the file
 	// itself is where it's kept
 	if p := os.Getenv("APPIMAGE"); p != "" {
