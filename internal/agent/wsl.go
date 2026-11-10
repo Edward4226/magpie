@@ -39,8 +39,9 @@ import (
 // an agent of its own, <id>@wsl:<distro> (codex@wsl:Ubuntu,
 // pi@wsl:Ubuntu, claude@wsl:Ubuntu). The gateway it is pointed at is
 // 127.0.0.1 when the distro's 127.0.0.1 reaches Windows' (mirrored or
-// consomme networking, as the distro's wslinfo says, wslrun.HostLoopback;
-// or mirrored in .wslconfig where there is no wslinfo); under NAT it is
+// consomme networking, or WSL 1, whose network stack is Windows' own, as
+// the distro's wslinfo says, wslrun.HostLoopback; or mirrored in
+// .wslconfig where there is no wslinfo); under NAT it is
 // Windows as WSL sees it, which reaches the gateway only while that
 // listens beyond loopback.
 
@@ -238,10 +239,12 @@ type distro struct {
 	// "/mnt/c" is "C:"
 	Drives map[string]string `json:"drives,omitempty"`
 	// Mirrored is whether the distro's 127.0.0.1 is Windows' (mirror): in
-	// mirrored networking, or in consomme
+	// mirrored networking, in consomme, or in WSL 1, whose network stack
+	// is Windows' own
 	Mirrored bool `json:"-"`
 	// noRelay: consomme with localhostForwarding=false in .wslconfig, where
-	// the distro's 127.0.0.1 is its own after all
+	// the distro's 127.0.0.1 is its own after all. localhostForwarding is
+	// a WSL 2 setting: WSL 1 shares Windows' stack and has no relay
 	noRelay bool
 	Running bool `json:"-"`
 	// up asks whether it runs now (wslUp), for one wslDistros listed
@@ -367,10 +370,11 @@ func below(path, dir string) (string, bool) {
 // predates consomme, so .wslconfig's consomme isn't taken for one. Under
 // consomme, cfg's localhostForwarding=false (wsl2.localhostForwarding)
 // turns the relay of 127.0.0.1 off; it stays the address, with a notice,
-// as Windows' next hop (the default route) is never Windows there.
+// as Windows' next hop (the default route) is never Windows there. WSL 1
+// has no relay to turn off: it is Windows' own network stack.
 func (d *distro) mirror(cfg string) {
 	d.Mirrored = wslrun.HostLoopback(d.Net) || d.Net == "" && wslMirrored(cfg)
-	d.noRelay = d.Net != "mirrored" && wslrun.HostLoopback(d.Net) && wslOff(cfg, "localhostForwarding")
+	d.noRelay = d.Net != "mirrored" && d.Net != "wsl1" && wslrun.HostLoopback(d.Net) && wslOff(cfg, "localhostForwarding")
 }
 
 // notMirrored is the notice of an agent in a distro not known to be in

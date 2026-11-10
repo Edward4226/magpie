@@ -388,18 +388,20 @@ func HostAt(mode, route string, nets []*net.IPNet) string {
 	return route
 }
 
-// HostLoopback reports whether 127.0.0.1 inside a WSL 2 distro reaches
+// HostLoopback reports whether 127.0.0.1 inside a WSL distro reaches
 // Windows' own 127.0.0.1 in networking mode, as wslinfo --networking-mode
-// prints it: mirrored, and consomme (WSL 2.9's name for what was
-// virtioproxy), whose user-mode stack relays the distro's 127.0.0.1 to
-// Windows' while localhostForwarding is on, as it is unless .wslconfig
-// turns it off (microsoft/WSL's ConsommeTests::LoopbackGuestToHost). Its
-// default route there is Windows' own next hop (198.18.0.2 under a TUN
-// proxy, #1230), never Windows. Under nat, bridged or none, and for a mode
-// not known (""), 127.0.0.1 is the distro's own.
+// prints it: wsl1 (WSL 1 shares Windows' network stack, so the distro's
+// loopback is Windows' loopback), mirrored, and consomme (WSL 2.9's name
+// for what was virtioproxy), whose user-mode stack relays the distro's
+// 127.0.0.1 to Windows' while localhostForwarding is on, as it is unless
+// .wslconfig turns it off (microsoft/WSL's
+// ConsommeTests::LoopbackGuestToHost). Its default route there is Windows'
+// own next hop (198.18.0.2 under a TUN proxy, #1230), never Windows. Under
+// nat, bridged or none, and for a mode not known (""), 127.0.0.1 is the
+// distro's own.
 func HostLoopback(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "mirrored", "consomme", "virtioproxy":
+	case "wsl1", "mirrored", "consomme", "virtioproxy":
 		return true
 	}
 	return false

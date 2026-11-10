@@ -78,6 +78,9 @@ func TestWSLNetworkingFromWslinfo(t *testing.T) {
 		// virtioproxy, its name before WSL 2.9, did
 		{"consomme", "", true, ""},
 		{"virtioproxy", "", true, ""},
+		// WSL 1 shares Windows' network stack, so its 127.0.0.1 is
+		// Windows' whatever its default route says (#3333)
+		{"wsl1", "", true, ""},
 		{"bridged", "", false, "is in bridged networking"},
 		{"nat", "[wsl2]\nnetworkingMode=mirrored\n", false, "is in nat networking"},
 		// a WSL without wslinfo predates consomme: .wslconfig's isn't taken
@@ -230,6 +233,9 @@ func TestWSLConsommeLocalhostForwardingOff(t *testing.T) {
 		{"consomme", "[experimental]\nlocalhostForwarding=false\n", false},
 		{"consomme", "", false},
 		{"mirrored", "[wsl2]\nlocalhostForwarding=false\n", false},
+		// localhostForwarding is a WSL 2 setting, and WSL 1 has no relay
+		// to turn off (#3333)
+		{"wsl1", "[wsl2]\nlocalhostForwarding=false\n", false},
 	} {
 		home, _ := codexHome(t, "", "model = \"gpt-5.5\"\n")
 		os.WriteFile(filepath.Join(home, ".wslconfig"), []byte(c.cfg), 0o644)
