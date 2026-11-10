@@ -3613,7 +3613,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			hw.over = &refusalHandover{proto: from, seq: -1}
 		}
 		// the reasoning's hold, above, once the handover is known
-		hw.thinkingShown = !s.holdsThinking(c, hw.over != nil) || last
+		// Nor is it held while Settings' RefusalRetries lets no refusal be
+		// asked of another candidate: the reasoning can stream as it comes
+		// and the refusal still reaches the agent, as it does on the last
+		// candidate (#4539).
+		hw.thinkingShown = !s.holdsThinking(c, hw.over != nil) || last || !refusalAsksAgain(refusals+1)
 		report := cacheReport
 		if c.p.Account == nil || c.p.Account.Agent != "claude" {
 			report = nil

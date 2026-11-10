@@ -642,3 +642,78 @@ func TestThinkingStreamsWithNoOneElse(t *testing.T) {
 		}
 	}
 }
+
+// With RefusalRetries 0 no refusal is asked of the next candidate
+// (refusalAsksAgain cuts the list to the last and hands it back), so
+// holding the first candidate's reasoning guarded a retry that could not
+// happen: Claude Code saw no thinking until the answer began. With the
+// retries spent, the reasoning streams as it comes; a quota, rate limit or
+// error before the reply still fails over as before. Unset, it is held for
+// the next candidate (#4539).
+func TestThinkingStreamsWhenNoRefusalIsAskedAgain(t *testing.T) {
+	for _, x := range []struct {
+		name    string
+		retries bool
+		held    bool
+	}{
+		{"retries 0", true, false},
+		{"unset", false, true},
+	} {
+		t.Run(x.name, func(t *testing.T) {
+			fresh(t)
+			if x.retries {
+				refusalRetries(t, 0)
+			}
+			up := &slowThinker{events: glmThinksSlowly, gap: 200 * time.Millisecond, done: make(chan time.Time, 1)}
+			vendor := httptest.NewServer(up)
+			t.Cleanup(vendor.Close)
+			if err := provider.Save(provider.Provider{ID: "a", Name: "A", Key: "k",
+				Models: []string{"claude-opus-5-5"}, Anthropic: vendor.URL}); err != nil {
+				t.Fatal(err)
+			}
+			scriptedOn(t, "b", provider.Anthropic, &scripted{replies: []reply{{200, "text/event-stream", anthropicAnswer}}})
+			refusalGroup(t, "a/claude-opus-5-5", "b/m")
+			s := New()
+			gw := httptest.NewServer(s.Handler())
+			t.Cleanup(gw.Close)
+
+			res, err := http.Post(gw.URL+"/v1/messages", "application/json", strings.NewReader(claudeCodeAsk))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			var firstThought, firstText time.Time
+			rd := bufio.NewReader(res.Body)
+			for {
+				ln, readErr := rd.ReadString('\n')
+				if firstThought.IsZero() && strings.Contains(ln, `"thinking_delta"`) {
+					firstThought = time.Now()
+				}
+				if firstText.IsZero() && strings.Contains(ln, `"text_delta"`) {
+					firstText = time.Now()
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			select {
+			case <-up.done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the vendor never finished")
+			}
+			if firstThought.IsZero() || firstText.IsZero() {
+				t.Fatal("no thinking or no text reached the client")
+			}
+			// Three thoughts 200ms apart come before the text: streamed,
+			// the text begins well after the first thought; held, both
+			// arrive together.
+			early := firstText.Sub(firstThought) < 300*time.Millisecond
+			if early != x.held {
+				t.Fatalf("thinking held %v, want %v: first thought %v before the text", early, x.held, firstText.Sub(firstThought))
+			}
+			if r := lastRoute(s); len(r.Tries) != 1 {
+				t.Fatalf("the second candidate was asked: %+v", r.Tries)
+			}
+		})
+	}
+}
