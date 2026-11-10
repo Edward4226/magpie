@@ -3616,8 +3616,17 @@ func resolveIn(entries []Entry, id string) (Provider, string, bool) {
 	if pid, model, ok := strings.Cut(id, "/"); ok {
 		// the providers a request holds (All): an agent's value of a
 		// model not listed lands here
-		if p := lookIn(sharedAll(), pid); p != nil && p.On() && !p.ServesNone() {
-			return p.clone(), model, true
+		if p := lookIn(sharedAll(), pid); p != nil {
+			// A prefix naming one of the user's providers binds the id to
+			// that provider (#3698). If it is off or serves none, the id
+			// resolves nowhere; it must not fall through to another
+			// provider whose catalog happens to list the same vendor id.
+			// An unknown prefix still falls through, so a genuine bare id
+			// containing a slash keeps its catalog lookup.
+			if p.On() && !p.ServesNone() {
+				return p.clone(), model, true
+			}
+			return Provider{}, "", false
 		}
 	}
 	for i := range entries {
