@@ -9487,13 +9487,31 @@ function drawEditor(p, presetID) {
     return row;
   };
 
+  // accountsHint: what the Accounts field says over a subscription's
+  // rows. Smart, Least used first and Use before expiry pick by each
+  // account's quota, so the saved order only settles ties there; In order
+  // is the routing that spends the first first. The Routing field below
+  // says the same, and Make first says it on its answer (CryptoSarom on X).
+  const accountsHint = (a, p) => {
+    const sub = subOf(a.agent);
+    const own = t("Only requests through magpie use them; {agent} itself stays signed in as it is.", { agent: a.agentName || p.name });
+    const kept = keptLogin(p);
+    if (p.routing) return t("Tick every account to use; Routing says how requests spread over them.") + (sub.own ? " " + own : "");
+    if (sub.single) return t("{agent} keeps one account; the gateway runs it for every request. Signing in to another replaces it.", { agent: a.agentName });
+    if (kept) return t("Routing picks the account for each request by its quota; the order only settles ties. {agent} stays signed in to {user}, whatever it has left.", { agent: a.agentName, user: kept });
+    if (p.keepLogin && !p.switchOnly) return t("Routing picks the account for each request through magpie; {agent} on its own stays signed in to the first account, whatever it has left.", { agent: a.agentName });
+    if (p.switchOnly) return t("{agent} signs in to the first. Tick more and magpie moves on to the next when the one before it is 98% used. Sessions already running keep theirs until restarted.", { agent: a.agentName });
+    if (sub.own || sub.plugin) return t("The gateway picks the account for each request by its quota; the order only settles ties. Tick more to let it use them.") + (sub.own ? " " + own : "");
+    return t("{agent} signs in to the first. Tick more and magpie moves the sign-in on at 98% used; requests through magpie go by each account's quota, so the order only settles ties. Sessions already running keep theirs until restarted.", { agent: a.agentName });
+  };
+
   if (p?.account) {
     const a = p.account;
     if (subOf(a.agent)) {
       if (a.agent === "claude" && !p.switchOnly) ed.append(claudeModeRow());
       // switched connected or not (Greatrobbort on X)
       const via = a.wsl ? t("Runs through WSL · {distro}: Claude Code there signs in and answers; Windows has none of its own.", { distro: a.wsl }) + " " : "", alone = /^c(laude|odex)$/.test(a.agent) ? " " + t("Just want accounts switched? {agent} needn't be connected to magpie.", { agent: a.agentName }) : "";
-      ed.append(...field(t("Accounts"), renderAccounts(a, p), via + (p.routing ? t("Tick every account to use; Routing says how requests spread over them.") + (subOf(a.agent).own ? " " + t("Only requests through magpie use them; {agent} itself stays signed in as it is.", { agent: a.agentName || p.name }) : "") : subOf(a.agent).single ? t("{agent} keeps one account; the gateway runs it for every request. Signing in to another replaces it.", { agent: a.agentName }) : subOf(a.agent).own && (a.logins || []).some((l) => l.own) ? t("The gateway uses the first. Tick more and it moves on to the next when the one before it is out of quota. {agent} itself stays signed in as it is.", { agent: a.agentName && a.agentName !== a.agent ? a.agentName : p.name }) : subOf(a.agent).own || subOf(a.agent).plugin ? t("The gateway uses the first. Tick more and it moves on to the next when the one before it is out of quota.") : t("{agent} signs in to the first. Tick more and magpie moves on to the next when the one before it is out of quota. Sessions already running keep theirs until restarted.", { agent: a.agentName })) + alone));
+      ed.append(...field(t("Accounts"), renderAccounts(a, p), via + accountsHint(a, p) + alone));
       ed.append(...pluginOptionsField(subOf(a.agent), true));
       if ((a.logins || []).filter((l) => l.active || l.on).length > 1) ed.append(...renderRouting(p));
       if (p.move) ed.append(...renderMove(p));

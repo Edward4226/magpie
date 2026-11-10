@@ -64,7 +64,7 @@ function serve(lang, first, posts) {
 
 const words = {
   en: { switchOnly: "Only switch Codex's sign-in", magpieMoves: /Tick more and magpie moves on to the next/, keep: "Keep Codex signed in to", first: "the first account", pickHead: "Account to stay signed in to", signed: "Signed in", firstLabel: "First", makeFirst: "Make first", keptAs: /Codex on its own stays signed in to spare@example.com/, kept: /Codex on its own stays signed in to the first account/, moves: /once it is 98% used/, usedUp: /once it is used up/ },
-  zh: { switchOnly: "只切换 Codex 的登录", magpieMoves: /前一个额度用完 magpie 自动换下一个/, keep: "Codex 始终登录", first: "首选账号", pickHead: "始终登录的账号", signed: "已登录", firstLabel: "首选", makeFirst: "设为首选", keptAs: /Codex 直连时始终登录 spare@example.com/, kept: /Codex 直连时始终登录首选账号/, moves: /用到 98% 时/, usedUp: /额度用完时/ },
+  zh: { switchOnly: "只切换 Codex 的登录", magpieMoves: /前一个用到 98% 时 magpie 自动换下一个/, keep: "Codex 始终登录", first: "首选账号", pickHead: "始终登录的账号", signed: "已登录", firstLabel: "首选", makeFirst: "设为首选", keptAs: /Codex 直连时始终登录 spare@example.com/, kept: /Codex 直连时始终登录首选账号/, moves: /用到 98% 时/, usedUp: /额度用完时/ },
 };
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -192,7 +192,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.doesNotMatch(text, w.kept);
         assert.doesNotMatch(text, w.keptAs);
         assert.match(text, w.magpieMoves);
-        assert.equal(await page.evaluate(() => I18N.zh["{agent} signs in to the first. Tick more and magpie moves on to the next when the one before it is out of quota. Sessions already running keep theirs until restarted."] ? "" : "missing"), "");
+        assert.equal(await page.evaluate(() => I18N.zh["{agent} signs in to the first. Tick more and magpie moves on to the next when the one before it is 98% used. Sessions already running keep theirs until restarted."] ? "" : "missing"), "");
         assert.deepEqual(errors, []);
       });
     }

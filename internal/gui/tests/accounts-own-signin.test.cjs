@@ -38,11 +38,11 @@ function serve(lang) {
 }
 
 const says = {
-  en: ["Only requests through magpie use them; Antigravity itself stays signed in as it is.", "The gateway uses the first."],
-  zh: ["只有经过 magpie 的请求会用这些账号；Antigravity 本身的登录不变。", "网关"],
-  "zh-TW": ["只有經過 magpie 的請求會用這些帳號；Antigravity 本身的登入不變。", "閘道"],
-  ja: ["これらのアカウントを使うのは magpie を通るリクエストだけです。Antigravity 自身のサインインはそのままです。", "ゲートウェイ"],
-  de: ["Nur Anfragen über magpie verwenden diese Konten; Antigravity selbst bleibt angemeldet wie bisher.", "Zugangspunkt"],
+  en: ["Only requests through magpie use them; Antigravity itself stays signed in as it is.", "The gateway picks the account for each request by its quota"],
+  zh: ["只有经过 magpie 的请求会用这些账号；Antigravity 本身的登录不变。", "网关按每个账号的额度"],
+  "zh-TW": ["只有經過 magpie 的請求會用這些帳號；Antigravity 本身的登入不變。", "網關按每個帳號的額度"],
+  ja: ["これらのアカウントを使うのは magpie を通るリクエストだけです。Antigravity 自身のサインインはそのままです。", "ゲートウェイは各アカウントの枠"],
+  de: ["Nur Anfragen über magpie verwenden diese Konten; Antigravity selbst bleibt angemeldet wie bisher.", "Der Zugangspunkt wählt das Konto"],
 };
 const signsIn = { en: "Antigravity signs in to the first" };
 
